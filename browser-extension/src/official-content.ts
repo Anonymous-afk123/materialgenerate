@@ -17,6 +17,10 @@ import {
   hasVisibleLoginPrompt,
   hasVisibleValidationErrors,
   hasUploadControls,
+  hasApplicationForm,
+  hasApplicationPageControls,
+  hasDevelopmentPageControls,
+  hasFeaturesPageControls,
   type R11Page,
   R11Adapter,
 } from "./r11-adapter";
@@ -59,10 +63,16 @@ let scheduledTimer: number | null = null;
 let advancing = false;
 const transfers = new Map<string, TransferState>();
 
-const NAVIGATION_WAIT_MS = 8_000;
-const NAVIGATION_RETRY_LIMIT = 2;
-const PAGE_RETRY_LIMIT = 12;
-const PAGE_RETRY_DELAY_MS = 260;
+const NAVIGATION_WAIT_MS = 2_500;
+const NAVIGATION_RETRY_LIMIT = 3;
+const PAGE_RETRY_LIMIT = 8;
+const PAGE_RETRY_DELAY_MS = 300;
+const PAGE_STABILITY_MS = 220;
+const NEXT_RETRY_LIMIT = 4;
+const NEXT_RETRY_DELAY_MS = 320;
+const NEXT_CONTROL_WAIT_MS = 2_500;
+const FORM_SETTLE_MS = 520;
+const PAGE_READY_TIMEOUT_MS = 15_000;
 
 function sendMessage(message: Record<string, unknown>): void {
   void chrome.runtime.sendMessage({ protocol: FILING_PROTOCOL, source: FILING_EXTENSION_SOURCE, ...message }).catch(() => undefined);
@@ -96,11 +106,19 @@ function finish(): void {
   sendEvent({ protocol: FILING_PROTOCOL, source: FILING_EXTENSION_SOURCE, type: "FILING_COMPLETED", jobId: session.jobId, step: "completed" });
 }
 
-function scheduleAdvance(delay = 250): void {
+function scheduleAdvance(delay = 250, force = false): void {
+  // R11 is a Vue SPA and continuously changes classes, validation messages
+  // and upload progress attributes. Do not let a MutationObserver callback
+  // keep postponing a navigation retry forever. Explicit state-machine
+  // transitions may replace the timer; ordinary observer callbacks only
+  // create one when no timer is already pending.
+  if (scheduledTimer !== null && !force) return;
   if (scheduledTimer !== null) window.clearTimeout(scheduledTimer);
   scheduledTimer = window.setTimeout(() => {
     scheduledTimer = null;
-    void advance();
+    void advance().catch((error: unknown) => {
+      if (session) fail(adapterErrorCode(error), "application_form");
+    });
   }, delay);
 }
 
@@ -155,7 +173,7 @@ function resetSession(command: Extract<OfficialCommand, { type: "BEGIN_FILING" |
       else session.stage = "review";
     }
   }
-  scheduleAdvance(80);
+  scheduleAdvance(80, true);
 }
 
 function cancelSession(jobId: string): void {
@@ -370,15 +388,88 @@ async function fillPageWithRetry(adapter: R11Adapter, page: R11Page): Promise<bo
   for (let attempt = 0; attempt <= PAGE_RETRY_LIMIT; attempt += 1) {
     if (!session || detectR11Page(document) !== page) return false;
     try {
+      if (!await waitForPageReady(page)) return false;
       await adapter.fillCurrentPage(session?.manifest.application as FilingManifest["application"]);
       return Boolean(session && detectR11Page(document) === page);
     } catch (error) {
       if (detectR11Page(document) !== page) return false;
-      if (!(error instanceof AdapterError) || error.code !== "field_not_found" || attempt === PAGE_RETRY_LIMIT) throw error;
+      if (!(error instanceof AdapterError) || !["field_not_found", "field_verification_failed"].includes(error.code) || attempt === PAGE_RETRY_LIMIT) throw error;
       await new Promise<void>((resolve) => window.setTimeout(resolve, PAGE_RETRY_DELAY_MS));
     }
   }
   return false;
+}
+
+async function clickNextWithRetry(adapter: R11Adapter, page: R11Page): Promise<boolean> {
+  let deadline = Date.now() + NEXT_CONTROL_WAIT_MS;
+  let refillAttempts = 0;
+  let lastError: unknown = new AdapterError("field_not_found", "官方页面下一步控件尚未完成渲染");
+  while (Date.now() < deadline) {
+    if (!session || detectR11Page(document) !== page) return false;
+    // R11 validates asynchronously after input/change/blur. Give the current
+    // Vue tree a quiet window before asking its own stepNext handler to run.
+    await new Promise<void>((resolve) => window.setTimeout(resolve, FORM_SETTLE_MS));
+    if (!session || detectR11Page(document) !== page) return false;
+    try {
+      adapter.clickNext();
+      return true;
+    } catch (error) {
+      if (!(error instanceof AdapterError) || !["field_not_found", "field_verification_failed"].includes(error.code)) throw error;
+      lastError = error;
+      // A disabled button or a transiently missing button is not enough
+      // evidence that the portal structure changed. Give the official page a
+      // few polling turns first. If Vue still has not enabled the button,
+      // re-fill the same page at most a bounded number of times so its model
+      // receives another input/change/blur sequence.
+      await new Promise<void>((resolve) => window.setTimeout(resolve, NEXT_RETRY_DELAY_MS));
+      if (error.code === "field_verification_failed" && refillAttempts < NEXT_RETRY_LIMIT && Date.now() < deadline) {
+        refillAttempts += 1;
+        const filled = await fillPageWithRetry(adapter, page);
+        if (!filled || !session || detectR11Page(document) !== page) return false;
+        // The refill itself can take longer than one polling window. Start a
+        // fresh bounded window for the official button to consume the new Vue
+        // model value; the total number of refills remains capped above.
+        deadline = Date.now() + NEXT_CONTROL_WAIT_MS;
+      }
+    }
+  }
+  throw lastError;
+}
+
+async function waitForPageTransition(from: R11Page, timeoutMs = NEXT_CONTROL_WAIT_MS): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!session) return false;
+    const current = detectR11Page(document);
+    if (current !== "unknown" && current !== from) return true;
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 120));
+  }
+  return false;
+}
+
+function pageHasExpectedAnchor(page: R11Page): boolean {
+  if (page === "application") return hasApplicationPageControls(document);
+  if (page === "legacy") return hasApplicationForm(document);
+  if (page === "development") return hasDevelopmentPageControls(document);
+  if (page === "features") return hasFeaturesPageControls(document);
+  return true;
+}
+
+async function waitForPageReady(page: R11Page, timeoutMs = PAGE_READY_TIMEOUT_MS): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  let stableSince = 0;
+  while (Date.now() < deadline) {
+    if (!session || detectR11Page(document) !== page) return false;
+    if (pageHasExpectedAnchor(page)) {
+      if (!stableSince) stableSince = Date.now();
+      if (Date.now() - stableSince >= PAGE_STABILITY_MS) return true;
+    } else {
+      stableSince = 0;
+    }
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 120));
+  }
+  if (!session || detectR11Page(document) !== page) return false;
+  throw new AdapterError("field_not_found", "官方页面字段尚未完成渲染");
 }
 
 async function handleFormPage(adapter: R11Adapter, page: R11Page): Promise<void> {
@@ -386,7 +477,7 @@ async function handleFormPage(adapter: R11Adapter, page: R11Page): Promise<void>
   if (session.navigationPage === page) {
     const elapsed = Date.now() - session.navigationStartedAt;
     if (elapsed < NAVIGATION_WAIT_MS) {
-      scheduleAdvance(Math.min(900, NAVIGATION_WAIT_MS - elapsed + 50));
+      scheduleAdvance(Math.min(500, NAVIGATION_WAIT_MS - elapsed + 50), true);
       return;
     }
     // R11 is a Vue SPA. The native controls may show the value before the
@@ -423,12 +514,16 @@ async function handleFormPage(adapter: R11Adapter, page: R11Page): Promise<void>
   }
   if (page === "development" && !await uploadDevelopmentProof(adapter)) return;
   if (!session || detectR11Page(document) !== page) return;
-  // Give Vue's input/change handlers and any dependent controls one more
-  // render turn before invoking the portal's own validation.
-  await new Promise<void>((resolve) => window.setTimeout(resolve, 360));
-  if (!session || detectR11Page(document) !== page) return;
+  let transitioned = false;
   try {
-    adapter.clickNext();
+    const clicked = await clickNextWithRetry(adapter, page);
+    if (!clicked || !session) return;
+    // Observe the route directly as well as through MutationObserver. The
+    // portal's next-step handler is async and may change the hash before it
+    // renders the next Vue page; waiting here makes the normal transition
+    // deterministic and leaves the bounded retry path only for validation.
+    transitioned = await waitForPageTransition(page);
+    if (!session) return;
   } catch (error) {
     fail(adapterErrorCode(error), "application_form");
     return;
@@ -438,11 +533,16 @@ async function handleFormPage(adapter: R11Adapter, page: R11Page): Promise<void>
   session.navigationStartedAt = Date.now();
   session.navigationAttempts += 1;
   progress("application_form", "form_filled", pageProgress(page));
-  scheduleAdvance(900);
+  scheduleAdvance(transitioned ? 120 : 900, true);
 }
 
 async function advance(): Promise<void> {
   if (!session || advancing || session.stage === "done") return;
+  // MutationObserver callbacks can be queued while the page is being filled
+  // and run just after the state changes to a manual checkpoint. Never start
+  // the same page again until the user explicitly resumes the job; doing so
+  // used to make a correctly filled form look like a second failed attempt.
+  if ((session.stage === "review" || session.stage === "signature") && !session.resumeRequested) return;
   advancing = true;
   try {
     const adapter = new R11Adapter(document);
@@ -470,7 +570,7 @@ async function advance(): Promise<void> {
     if (adapter.isLandingPage() && session.stage === "idle") {
       adapter.openR11Entry();
       progress("opening_portal", "portal_opened", 5);
-      scheduleAdvance(800);
+      scheduleAdvance(800, true);
       return;
     }
 
@@ -538,7 +638,12 @@ chrome.runtime.onMessage.addListener((message: unknown) => {
 });
 
 observer = new MutationObserver(() => {
-  if (session) scheduleAdvance();
+  if (!session || advancing) return;
+  // A route transition is a high-priority wake-up. Otherwise keep the
+  // currently scheduled state-machine timer intact while Vue settles.
+  const currentPage = detectR11Page(document);
+  const routeChanged = currentPage !== "unknown" && currentPage !== session.lastPage;
+  scheduleAdvance(routeChanged ? 120 : 250, routeChanged);
 });
 observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true });
 

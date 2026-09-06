@@ -53,7 +53,7 @@ function formFor(holders: CopyrightHolder[], developmentMethod: "independent" | 
     software_short_name: "模拟填报",
     version: "V1.0",
     software_category: "应用软件",
-    development_date: "2026-08-01",
+    development_date: "2026-09-05",
     development_method: developmentMethod,
     development_hardware: "PC",
     runtime_hardware: "PC",
@@ -126,18 +126,27 @@ function fixture(form: CopyrightFormData, fileCount: number): string {
   </body></html>`;
 }
 
-function multiPageFixture(form: CopyrightFormData, delayFirstApplicationNavigation = false): string {
+function multiPageFixture(
+  form: CopyrightFormData,
+  delayFirstApplicationNavigation = false,
+  softwareCategoryMode: "normal" | "async" | "async-manual" = "normal",
+): string {
   const serializedForm = JSON.stringify(form).replace(/</g, "\\u003c");
   const serializedDelay = JSON.stringify(delayFirstApplicationNavigation);
+  const serializedSoftwareCategoryMode = JSON.stringify(softwareCategoryMode);
   return `<!doctype html><html><body>
     <main id="r11-app"></main>
     <script>
       const form = ${serializedForm};
       const delayFirstApplicationNavigation = ${serializedDelay};
+      const softwareCategoryMode = ${serializedSoftwareCategoryMode};
       const app = document.getElementById("r11-app");
       let applicationNextAttempts = 0;
       let finalSubmitClicks = 0;
       window.__finalSubmitClicks = finalSubmitClicks;
+      window.__softwareCategoryBoxClicks = 0;
+      window.__datePickerClicks = 0;
+      window.__holderSaveClicks = 0;
       window.__applicationValues = {};
       window.__developmentValues = {};
       window.__featureValues = {};
@@ -146,28 +155,63 @@ function multiPageFixture(form: CopyrightFormData, delayFirstApplicationNavigati
         return '<div class="fillin_item">' + label + '<div class="hd-input"><' + tag + ' id="' + id + '"></' + tag + '></div></div>';
       }
 
-      function selectField(label, id, options) {
-        return '<div class="fillin_item">' + label + '<div class="hd-select" data-name="' + id + '"><div class="box"></div><div class="dropdown" style="display:none">' + options.map((item) => '<div class="hd-option" data-value="' + item + '">' + item + '</div>').join("") + '</div></div></div>';
+      function selectField(label, id, options, selected = "") {
+        return '<div class="fillin_item">' + label + '<div class="hd-select" data-name="' + id + '"><div class="box">' + selected + '</div><div class="dropdown" style="display:none">' + options.map((item) => '<div class="hd-option' + (item === selected ? ' selected' : '') + '" data-value="' + item + '">' + item + '</div>').join("") + '</div></div></div>';
       }
 
       function radioField(label, name, options) {
         return '<div class="fillin_item">' + label + '<div class="hd-radio-group">' + options.map((item) => '<label class="hd-radio-button"><input type="radio" name="' + name + '" value="' + item + '"><span>' + item + '</span></label>').join("") + '</div></div>';
       }
 
+      function developmentMethodAndSharedField(includeShared) {
+        const method = '<div class="fillin_info"><h3>开发方式</h3><div class="hd-radio-group">'
+          + ['单独开发', '合作开发'].map((item) => '<label class="hd-radio-button"><input type="radio" name="development-method" value="' + item + '"><span>' + item + '</span></label>').join("")
+          + '</div></div>';
+        const shared = includeShared
+          ? '<div class="fillin_info"><h3>是否多个著作权人共同享有软件著作权</h3><div class="hd-radio-group">'
+            + ['是', '否'].map((item) => '<label class="hd-radio-button"><input type="radio" name="shared-holder" value="' + item + '"><span>' + item + '</span></label>').join("")
+            + '</div></div>'
+          : '';
+        return '<div class="fillin_item"><h3>开发方式</h3>' + method + shared + '</div>';
+      }
+
       function dateField(label, id) {
-        return '<div class="fillin_item">' + label + '<div class="datePicker"><input class="datepicker-input" id="' + id + '" readonly><div class="datepicker-main" style="display:none"><div class="calendar-title">2026年8月</div><table><tbody><tr><td>1</td><td>2</td><td>3</td></tr></tbody></table></div></div></div>';
+        return '<div class="fillin_item"><h3>' + label + '</h3><div class="fillin_info"><div class="datePicker">'
+          // Seed the visible text without firing the official date-picker
+          // change event. The extension must still click a real date cell;
+          // this models the stale Vue-controlled value seen in production.
+          + '<div class="datepicker-input"><input id="' + id + '" value="' + form.development_date + '" readonly></div>'
+          + '<div class="datepicker-main"><div class="datepicker-header">'
+          + '<span class="datepicke-btn datepicke-btn-prve"><svg></svg></span><span class="datepicke-btn datepicke-btn-next"><svg></svg></span>'
+          + '<span class="datepicke-btn datepicke-btn-prve"><svg></svg></span><span class="datepicke-btn datepicke-btn-next"><svg></svg></span>'
+          + '<div class="date-selects"><div class="datePickerSelect" data-date-part="year"><div class="datePickerSelectText">2026年</div><div class="datePickerSelectMenu">'
+          + '<div class="menu" label="2025年" value="2025">2025年</div><div class="menu hd_activeSelect" label="2026年" value="2026">2026年</div><div class="menu" label="2027年" value="2027">2027年</div>'
+          + '</div></div><div class="datePickerSelect" data-date-part="month"><div class="datePickerSelectText">8月</div><div class="datePickerSelectMenu">'
+          + Array.from({ length: 12 }, (_, index) => '<div class="menu' + (index === 7 ? ' hd_activeSelect' : '') + '" label="' + (index + 1) + '月" value="' + (index + 1) + '">' + (index + 1) + '月</div>').join("")
+          + '</div></div></div><span class="chooseNow day">今天</span><span class="chooseNow month">本月</span></div>'
+          + '<div class="datepick-dateBox"><div class="datepicker-body"><table><tbody><tr><td class="other-month disabled"><div><span>31</span></div></td><td data-day="5"><div><span>5</span></div></td><td><div><span>6</span></div></td></tr></tbody></table></div></div>'
+          + '</div></div></div>';
+      }
+
+      function softwareCategoryField() {
+        return '<div class="fillin_item"><h3>软件分类</h3><div class="fillin_info"><div class="hd-select" data-name="software-category">'
+          + '<div class="box"></div><div class="dropdown" style="display:none">'
+          + ['应用软件', '嵌入式软件', '中间件', '操作系统'].map((item) => '<div class="hd-option" data-value="' + item + '">' + item + '</div>').join("")
+          + '</div></div></div></div>';
       }
 
       function holderRow(index) {
         const holder = form.copyright_holders[index];
         const options = holder.holder_type === "person" ? ["自然人", "企业法人"] : ["自然人", holder.category || "企业法人"];
+        const autoApplicant = form.application_method === "copyright_holder" && index === 0;
         return '<div class="formGroup-item" data-holder-index="' + index + '">'
-          + selectField("人员类型", "holder-type-" + index, options)
-          + inputField("姓名/名称", "holder-name-" + index)
-          + selectField("证件类型", "holder-document-type-" + index, [holder.document_type, "统一社会信用代码"])
-          + inputField("证件号码", "holder-document-number-" + index)
-          + selectField("国籍", "holder-nationality-" + index, ["中国", "其他"])
-          + '<div class="fillin_item">省市<div class="hd-cascader" data-province="' + holder.province + '" data-city="' + holder.city + '"><div class="label"></div><div class="dropdown" style="display:none"><ul class="options"><li class="option" data-level="province">' + holder.province + '</li></ul></div></div></div>'
+          + selectField("人员类型", "holder-type-" + index, options, autoApplicant ? holder.category : "")
+          + '<div class="fillin_item">姓名/名称<div class="hd-input"><input id="holder-name-' + index + '" value="' + (autoApplicant ? holder.name : '') + '"></div></div>'
+          + selectField("证件类型", "holder-document-type-" + index, Array.from(new Set([holder.document_type, "统一社会信用代码证书"])), autoApplicant ? holder.document_type : "")
+          + '<div class="fillin_item">证件号码<div class="hd-input"><input id="holder-document-number-' + index + '" value="' + (autoApplicant ? holder.document_number : '') + '"></div></div>'
+          + selectField("国籍", "holder-nationality-" + index, ["中国", "其他"], autoApplicant ? holder.nationality : "")
+          + '<div class="fillin_item">省市<div class="hd-cascader" data-province="' + holder.province + '" data-city="' + holder.city + '"><div class="label">' + (autoApplicant ? holder.province + ' / ' + holder.city : '') + '</div><div class="dropdown" style="display:none"><ul class="options"><li class="option" data-level="province">' + holder.province + '</li></ul></div></div></div>'
+          + (autoApplicant ? '' : '<button type="button" class="holder-save">保存</button>')
           + '</div>';
       }
 
@@ -175,13 +219,35 @@ function multiPageFixture(form: CopyrightFormData, delayFirstApplicationNavigati
         document.querySelectorAll(".hd-select").forEach((control) => {
           const box = control.querySelector(".box");
           const dropdown = control.querySelector(".dropdown");
-          box.onclick = () => { dropdown.style.display = dropdown.style.display === "none" ? "block" : "none"; };
+          box.onclick = () => {
+            const opening = dropdown.style.display === "none";
+            if (control.dataset.name === "software-category") window.__softwareCategoryBoxClicks += 1;
+            dropdown.style.display = opening ? "block" : "none";
+            if (control.dataset.name === "software-category" && opening && softwareCategoryMode !== "normal" && !control.dataset.optionsReady) {
+              control.querySelectorAll(".hd-option").forEach((option) => { option.style.display = "none"; });
+              window.setTimeout(() => {
+                control.dataset.optionsReady = "true";
+                control.querySelectorAll(".hd-option").forEach((option) => { option.style.display = "block"; });
+                if (softwareCategoryMode === "async-manual") {
+                  control.querySelector(".hd-option")?.click();
+                }
+              }, 260);
+            }
+          };
           control.querySelectorAll(".hd-option").forEach((option) => {
             option.onclick = () => {
               control.querySelectorAll(".hd-option").forEach((item) => item.classList.remove("selected"));
               option.classList.add("selected");
               box.textContent = option.textContent;
               dropdown.style.display = "none";
+              const row = control.closest(".formGroup-item");
+              if (row && control.dataset.name?.startsWith("holder-nationality-")) {
+                row.querySelectorAll("[data-name^='holder-type-'] .box,[data-name^='holder-document-type-'] .box").forEach((display) => { display.textContent = ""; });
+                row.querySelector(".hd-cascader .label").textContent = "";
+              }
+              if (row && control.dataset.name?.startsWith("holder-type-")) {
+                row.querySelector("[data-name^='holder-document-type-'] .box").textContent = "";
+              }
             };
           });
         });
@@ -189,14 +255,34 @@ function multiPageFixture(form: CopyrightFormData, delayFirstApplicationNavigati
           const input = picker.querySelector("input");
           const calendar = picker.querySelector(".datepicker-main");
           picker.onclick = (event) => {
-            if (event.target === input || event.target === picker) calendar.style.display = "block";
+            if (event.target instanceof Element && event.target.closest(".datepicker-input")) {
+              window.__datePickerClicks += 1;
+              calendar.classList.add("open");
+            }
           };
-          picker.querySelector("td").onclick = () => {
+          picker.querySelectorAll("td").forEach((cell) => cell.onclick = () => {
+            if (cell.classList.contains("disabled") || cell.classList.contains("other-month")) return;
             input.value = form.development_date;
             input.dispatchEvent(new Event("input", { bubbles: true }));
             input.dispatchEvent(new Event("change", { bubbles: true }));
-            calendar.style.display = "none";
-          };
+            calendar.classList.remove("open");
+          });
+          picker.querySelectorAll(".datePickerSelect").forEach((select) => {
+            const text = select.querySelector(".datePickerSelectText");
+            const menu = select.querySelector(".datePickerSelectMenu");
+            text.onclick = () => { menu.style.display = "block"; };
+            select.querySelectorAll(".menu").forEach((option) => {
+              option.onclick = () => {
+                select.querySelector(".datePickerSelectText").textContent = option.getAttribute("label");
+                select.querySelectorAll(".menu").forEach((item) => item.classList.remove("hd_activeSelect"));
+                option.classList.add("hd_activeSelect");
+                menu.style.display = "none";
+                if (select.getAttribute("data-date-part") === "month") {
+                  picker.querySelector("td[data-day='5']")?.classList.remove("other-month", "disabled");
+                }
+              };
+            });
+          });
         });
         document.querySelectorAll(".hd-cascader").forEach((control) => {
           const label = control.querySelector(".label");
@@ -211,10 +297,19 @@ function multiPageFixture(form: CopyrightFormData, delayFirstApplicationNavigati
                 options.querySelector(".option").onclick = () => {
                   label.textContent = control.dataset.province + " / " + control.dataset.city;
                   dropdown.style.display = "none";
+                  const row = control.closest(".formGroup-item");
+                  if (row) row.querySelectorAll("[data-name^='holder-type-'] .box,[data-name^='holder-document-type-'] .box").forEach((display) => { display.textContent = ""; });
                 };
               }
             };
           });
+        });
+        document.querySelectorAll(".holder-save").forEach((save) => {
+          save.onclick = () => {
+            window.__holderSaveClicks += 1;
+            save.style.display = "none";
+            save.closest("[data-holder-row]")?.setAttribute("data-saved", "true");
+          };
         });
       }
 
@@ -258,10 +353,9 @@ function multiPageFixture(form: CopyrightFormData, delayFirstApplicationNavigati
       function renderDevelopment() {
         location.hash = "#/development";
         app.innerHTML = "<h1>软件开发信息</h1>"
-          + selectField("软件分类", "software-category", [form.software_category, "其他"])
+          + softwareCategoryField()
           + radioField("软件作品说明", "work-type", ["原创", "修改"])
-          + selectField("开发方式", "development-method", ["单独开发", "合作开发"])
-          + (form.development_method === "independent" ? "" : radioField("是否多个著作权人共同享有软件著作权", "shared-holder", ["是", "否"]))
+          + developmentMethodAndSharedField(form.development_method !== "independent")
           + dateField("开发完成日期", "development-date")
           + radioField("是否发表", "published", ["未发表", "已发表"])
           + '<section class="formGroup" id="holder-list">' + holderRow(0) + '</section>'
@@ -279,7 +373,7 @@ function multiPageFixture(form: CopyrightFormData, delayFirstApplicationNavigati
           window.__developmentValues = {
             category: document.querySelector("[data-name='software-category'] .box").textContent,
             workType: document.querySelector("input[name='work-type']:checked").value,
-            method: document.querySelector("[data-name='development-method'] .box").textContent,
+            method: document.querySelector("input[name='development-method']:checked").value,
             date: document.getElementById("development-date").value,
             published: document.querySelector("input[name='published']:checked").value,
             sharedHolder: document.querySelector("input[name='shared-holder']:checked")?.value || "",
@@ -287,6 +381,12 @@ function multiPageFixture(form: CopyrightFormData, delayFirstApplicationNavigati
             holder1: document.getElementById("holder-name-1")?.value || "",
             document0: document.getElementById("holder-document-number-0").value,
             document1: document.getElementById("holder-document-number-1")?.value || "",
+            type0: document.querySelector("[data-name='holder-type-0'] .box").textContent,
+            type1: document.querySelector("[data-name='holder-type-1'] .box")?.textContent || "",
+            documentType0: document.querySelector("[data-name='holder-document-type-0'] .box").textContent,
+            documentType1: document.querySelector("[data-name='holder-document-type-1'] .box")?.textContent || "",
+            nationality0: document.querySelector("[data-name='holder-nationality-0'] .box").textContent,
+            nationality1: document.querySelector("[data-name='holder-nationality-1'] .box")?.textContent || "",
             area0: document.querySelector("[data-holder-index='0'] .hd-cascader .label").textContent,
             area1: document.querySelector("[data-holder-index='1'] .hd-cascader .label")?.textContent || "",
           };
@@ -394,10 +494,15 @@ async function deliver(page: Page, message: FileTransferMessage | PortalMessage)
 }
 
 async function waitForCode(page: Page, code: string, timeout = 10_000): Promise<void> {
-  await page.waitForFunction((expected) => {
-    const items = (window as unknown as { __messages: PortalMessage[] }).__messages || [];
-    return items.some((item) => (item.event as PortalMessage | undefined)?.code === expected);
-  }, code, { timeout });
+  try {
+    await page.waitForFunction((expected) => {
+      const items = (window as unknown as { __messages: PortalMessage[] }).__messages || [];
+      return items.some((item) => (item.event as PortalMessage | undefined)?.code === expected);
+    }, code, { timeout });
+  } catch (error) {
+    const seen = await messages(page);
+    throw new Error(`${error instanceof Error ? error.message : String(error)}\\nmessages=${JSON.stringify(seen)}`);
+  }
 }
 
 async function waitForEventType(page: Page, type: string): Promise<void> {
@@ -523,15 +628,30 @@ test("R11 multi-page SPA fills each page after the user chooses applicant identi
       application: (window as unknown as { __applicationValues?: Record<string, string> }).__applicationValues,
       development: (window as unknown as { __developmentValues?: Record<string, string> }).__developmentValues,
       features: (window as unknown as { __featureValues?: Record<string, string> }).__featureValues,
+      datePickerClicks: (window as unknown as { __datePickerClicks: number }).__datePickerClicks,
+      holderSaveClicks: (window as unknown as { __holderSaveClicks: number }).__holderSaveClicks,
     }));
     assert.equal(values.application?.fullName, form.software_full_name);
     assert.equal(values.application?.rights, "原始取得");
     assert.equal(values.development?.method, "合作开发");
     assert.equal(values.development?.date, form.development_date);
+    assert.equal(values.datePickerClicks, 1);
     assert.equal(values.development?.sharedHolder, "是");
     assert.equal(values.development?.holder0, form.copyright_holders[0].name);
     assert.equal(values.development?.holder1, form.copyright_holders[1].name);
-    assert.match(values.development?.area0 || "", /北京市/);
+    assert.equal(values.development?.document0, form.copyright_holders[0].document_number);
+    assert.equal(values.development?.document1, form.copyright_holders[1].document_number);
+    assert.equal(values.development?.type0, "自然人");
+    assert.equal(values.development?.type1, "企业法人");
+    assert.equal(values.development?.documentType0, "居民身份证");
+    assert.equal(values.development?.documentType1, "统一社会信用代码证书");
+    assert.equal(values.development?.nationality0, "中国");
+    assert.equal(values.development?.nationality1, "中国");
+    // The first row is the authenticated applicant that R11 populated; only
+    // the newly added cooperative holder needs the row-level save action.
+    assert.equal(values.holderSaveClicks, 1);
+    assert.equal(values.development?.area0, "北京市 / 北京市");
+    assert.equal(values.development?.area1, "北京市 / 北京市");
     assert.match(values.features?.developmentHardware || "", /PC/);
     assert.equal(values.features?.sourceLines, String(form.source_code_lines));
     assert.equal(values.features?.language, "TypeScript");
@@ -540,6 +660,42 @@ test("R11 multi-page SPA fills each page after the user chooses applicant identi
     assert.equal(allMessages.some((item) => (item.event as PortalMessage | undefined)?.code === "portal_structure_changed"), false);
     assert.equal(allMessages.some((item) => item.type === "FILE_REQUEST" && item.materialId === proof.id), true);
     await page.close();
+  } finally {
+    await browser.close();
+  }
+});
+
+test("R11 waits for an async software category option without toggling the select", async () => {
+  await ensureOfficialBundle();
+  const browser = await chromium.launch({ headless: true });
+  try {
+    for (const mode of ["async", "async-manual"] as const) {
+      const page = await browser.newPage();
+      const form = formFor([holder("person", 0)], "independent");
+      await page.setContent(multiPageFixture(form, false, mode));
+      await installMockRuntime(page);
+      await page.addScriptTag({ path: officialBundle });
+      await page.waitForFunction(() => (window as unknown as { __messages: PortalMessage[] }).__messages?.some((item) => item.type === "OFFICIAL_READY"));
+      const manifest = manifestFor(form, 2);
+      await deliver(page, { protocol: "softreg-filing/v1", source: "softreg-extension", type: "BEGIN_FILING", jobId: manifest.jobId, manifest });
+      await waitForCode(page, "login_required");
+      await page.locator("#applicant").click();
+      await waitForCode(page, "review_required", 20_000);
+
+      const values = await page.evaluate(() => ({
+        hash: location.hash,
+        category: (window as unknown as { __developmentValues?: { category?: string } }).__developmentValues?.category || "",
+        categoryBoxClicks: (window as unknown as { __softwareCategoryBoxClicks: number }).__softwareCategoryBoxClicks,
+      }));
+      assert.equal(values.hash, "#/confirm");
+      assert.equal(values.category, "应用软件");
+      // The async fixture reveals the four visible R11 choices only after the
+      // first open. In the manual variant it then selects the first choice as
+      // a user would. A second click would reopen the menu and reproduce the
+      // production bug.
+      assert.equal(values.categoryBoxClicks, 1);
+      await page.close();
+    }
   } finally {
     await browser.close();
   }

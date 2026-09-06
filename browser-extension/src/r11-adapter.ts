@@ -95,20 +95,20 @@ const filingProfileAliases: Array<[keyof FilingProfile, readonly string[]]> = [
 ];
 
 const holderAliases = {
-  holder_type: ["著作权人类型", "权利人类型", "人员类型", "主体类型"],
+  holder_type: ["著作权人类型", "权利人类型", "人员类型", "身份类别", "主体类型", "请选择身份类别"],
   name: ["著作权人名称", "姓名/名称", "姓名或名称", "姓名", "单位名称", "权利人名称", "请输入姓名", "请输入单位名称"],
   category: ["著作权人类别", "单位类别", "主体类别"],
-  document_type: ["证件类型", "身份证明类型"],
+  document_type: ["证件类型", "身份证明类型", "请选择证件类型"],
   document_number: ["证件号码", "统一社会信用代码", "身份证号", "证件号", "请输入证件号码"],
-  nationality: ["国籍", "国家/地区", "所在国家", "国家"],
-  province: ["省份", "所在省"],
-  city: ["城市", "所在城市"],
-  area: ["省市", "省份城市", "所在地区", "地区"],
+  nationality: ["国籍", "国家/地区", "所在国家", "国家", "请选择国家", "请选择国家/地区"],
+  province: ["省份", "所在省", "请输入省份", "请输入省份(限中文)"],
+  city: ["城市", "所在城市", "请输入城市", "请输入城市(限中文)"],
+  area: ["省市", "省份城市", "所在地区", "地区", "请选择地区", "无地区信息"],
   birth_or_established_date: ["出生日期", "成立日期"],
 } as const;
 
 const choiceAliases = {
-  work_type: ["软件作品说明", "作品说明", "作品类型"],
+  work_type: ["软件作品说明", "软件说明", "作品说明", "作品类型"],
   development_method: ["开发方式", "开发模式"],
   rights_acquisition_method: ["权利取得方式"],
   rights_scope: ["权利范围"],
@@ -136,6 +136,13 @@ const choiceLabels = {
   is_published: { true: ["已发表", "是"], false: ["未发表", "否"] },
 } as const;
 
+function holderDocumentTypeLabels(holder: CopyrightHolder): string[] {
+  const labels = [holder.document_type];
+  if (holder.holder_type === "person") labels.push("居民身份证", "身份证");
+  else labels.push("统一社会信用代码证书", "统一社会信用代码");
+  return Array.from(new Set(labels));
+}
+
 const uploadAliases: Record<MaterialKind, string[]> = {
   source_code_pdf: ["源代码 PDF", "源程序鉴别材料", "源程序", "源代码"],
   user_manual_pdf: ["用户手册 PDF", "文档鉴别材料", "用户手册", "软件说明书", "文档"],
@@ -158,10 +165,16 @@ function normalizedValue(value: string): string {
 }
 
 export function isVisible(element: Element): boolean {
-  const node = element as HTMLElement;
-  if (node.hidden || node.getAttribute("aria-hidden") === "true") return false;
-  const style = typeof window !== "undefined" ? window.getComputedStyle(node) : null;
-  return style?.display !== "none" && style?.visibility !== "hidden";
+  if (typeof window === "undefined") return true;
+  let current: Element | null = element;
+  while (current) {
+    const node = current as HTMLElement;
+    if (node.hidden || current.getAttribute("aria-hidden") === "true") return false;
+    const style = window.getComputedStyle(current);
+    if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse") return false;
+    current = current.parentElement;
+  }
+  return true;
 }
 
 function isDisabled(element: Element): boolean {
@@ -200,8 +213,32 @@ function directTextOf(element: Element): string {
 }
 
 function contextTextOf(element: Element): string {
-  const parent = element.closest(FIELD_CONTEXT_SELECTOR);
-  return parent?.textContent || "";
+  const parts: string[] = [];
+
+  // R11 uses `.fillin_item` as a visual section, but a single section can
+  // contain more than one control (for example the development-method radio
+  // group and the “multiple copyright holders” radio group).  The nearest
+  // `.fillin_item` therefore is too broad to identify a choice. Prefer the
+  // nearest control block and its preceding heading, then fall back to the
+  // broad field container for older portal layouts.
+  const local = element.closest(
+    ".fillin_info,.formGroup-item-body-left-item,.form-item,.form-group,.ant-form-item,.el-form-item,fieldset,td,[data-field]",
+  );
+  if (local?.textContent) parts.push(local.textContent);
+
+  const section = element.closest(".fillin_item");
+  if (section) {
+    const headings = Array.from(section.querySelectorAll("h1,h2,h3,h4,h5,h6,[role='heading']"));
+    const preceding = headings.filter((heading) => Boolean(heading.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING));
+    const heading = preceding[preceding.length - 1];
+    if (heading?.textContent) parts.push(heading.textContent);
+  }
+
+  if (!parts.length) {
+    const parent = element.closest(FIELD_CONTEXT_SELECTOR);
+    if (parent?.textContent) parts.push(parent.textContent);
+  }
+  return parts.join(" ");
 }
 
 function scoreText(element: Element, aliases: readonly string[]): number {
@@ -242,6 +279,18 @@ function uniqueElements<T extends Element>(elements: T[]): T[] {
   return Array.from(new Set(elements));
 }
 
+function choiceControls(root: ParentNode): HTMLElement[] {
+  const controls = Array.from(root.querySelectorAll(CHOICE_CONTROL_SELECTOR)).filter(isVisible) as HTMLElement[];
+  // GetArea renders an `.cascader` wrapper around the real `.hd-cascader`.
+  // Only use the wrapper as a fallback for portal builds that do not expose
+  // the inner component class; including both at once would make one field
+  // look like two equally good matches.
+  const legacyCascaders = Array.from(root.querySelectorAll(".cascader"))
+    .filter(isVisible)
+    .filter((element) => !element.querySelector(".hd-cascader")) as HTMLElement[];
+  return uniqueElements([...controls, ...legacyCascaders]);
+}
+
 export function findUniqueSemanticControl(root: ParentNode, aliases: readonly string[], selector = TEXT_CONTROL_SELECTOR): HTMLElement {
   const candidates = uniqueElements(Array.from(root.querySelectorAll(selector)).filter(isVisible));
   const scored = candidates.map((element) => ({ element, score: scoreText(element, aliases) })).filter((item) => item.score > 0);
@@ -263,7 +312,7 @@ function findUniqueSemanticControlIfPresent(root: ParentNode, aliases: readonly 
 }
 
 function findUniqueChoiceControl(root: ParentNode, aliases: readonly string[]): HTMLElement {
-  const candidates = uniqueElements(Array.from(root.querySelectorAll(CHOICE_CONTROL_SELECTOR)).filter(isVisible));
+  const candidates = choiceControls(root);
   const scored = candidates.map((element) => ({ element, score: scoreText(element, aliases) })).filter((item) => item.score > 0);
   if (!scored.length) throw new AdapterError("field_not_found", aliases.join("/"));
   const max = Math.max(...scored.map((item) => item.score));
@@ -273,7 +322,7 @@ function findUniqueChoiceControl(root: ParentNode, aliases: readonly string[]): 
 }
 
 function findUniqueChoiceControlIfPresent(root: ParentNode, aliases: readonly string[]): HTMLElement | null {
-  const candidates = uniqueElements(Array.from(root.querySelectorAll(CHOICE_CONTROL_SELECTOR)).filter(isVisible));
+  const candidates = choiceControls(root);
   const scored = candidates.map((element) => ({ element, score: scoreText(element, aliases) })).filter((item) => item.score > 0);
   if (!scored.length) return null;
   const max = Math.max(...scored.map((item) => item.score));
@@ -282,35 +331,101 @@ function findUniqueChoiceControlIfPresent(root: ParentNode, aliases: readonly st
   return winners[0] as HTMLElement;
 }
 
-function dispatchValue(element: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLElement): void {
+function dispatchInput(element: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLElement): void {
   try {
-    element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: null }));
+    element.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, inputType: "insertText", data: null }));
   } catch {
-    element.dispatchEvent(new Event("input", { bubbles: true }));
+    element.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
   }
-  element.dispatchEvent(new Event("change", { bubbles: true }));
-  element.dispatchEvent(new Event("blur", { bubbles: true }));
 }
 
-function setInputValue(element: HTMLInputElement | HTMLTextAreaElement, value: string): void {
+function dispatchValue(element: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLElement): void {
+  dispatchInput(element);
+  element.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+}
+
+async function setInputValue(element: HTMLInputElement | HTMLTextAreaElement, value: string): Promise<void> {
   element.focus();
   const prototype = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
   const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
-  if (setter) setter.call(element, value);
-  else element.value = value;
-  dispatchValue(element);
+  const write = () => {
+    if (setter) setter.call(element, value);
+    else element.value = value;
+    dispatchInput(element);
+  };
+  write();
+  // The official portal uses Vue 2 controlled inputs. The native value is
+  // visible immediately, while the component model and its parent props are
+  // updated on the next Vue render tick. Let input/change handlers settle on
+  // separate ticks and rewrite if a stale parent prop rendered over the value.
+  await waitForDomUpdate(1);
+  element.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+  await waitForDomUpdate(2);
+  if (element.value !== value) {
+    write();
+    await waitForDomUpdate(2);
+    element.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+    await waitForDomUpdate(1);
+  }
+  // Send one final input/change pair while the field is still focused, then
+  // use a real DOM blur so the component and its parent commit the same value
+  // before R11 runs its required-field validator. This avoids the small Vue 2
+  // window in which a synthetic blur can validate the previous parent prop.
+  dispatchInput(element);
+  await waitForDomUpdate(1);
+  element.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+  await waitForDomUpdate(2);
+  element.blur();
+  await waitForDomUpdate(2);
 }
 
 function readControlValue(element: HTMLElement): string {
   if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement) return element.value;
+  const customControl = element.matches(".cascader")
+    ? (element.querySelector(".hd-cascader") as HTMLElement | null) || element
+    : element;
+  if (customControl.matches(".hd-select,.hd-cascader")) {
+    const display = customControl.querySelector(".box,.label,[role='combobox'],.select-box,.select-value,.selected-value,.hd-select-value") as HTMLElement | null;
+    const input = display?.matches("input")
+      ? display as HTMLInputElement
+      : display?.querySelector("input") as HTMLInputElement | null;
+    if (input?.value) return input.value;
+    // Do not fall back to the whole custom control when a display node is
+    // present. Its dropdown contains every option (often hidden with CSS),
+    // so using customControl.textContent would make an empty select appear
+    // to already contain whichever option we are looking for.
+    return display ? display.textContent || "" : customControl.textContent || "";
+  }
   const nested = element.querySelector("input,textarea,select") as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null;
   if (nested) return nested.value;
-  if (element.matches(".hd-select,.hd-cascader")) return element.querySelector(".box,.label,[role='combobox']")?.textContent || "";
   return element.textContent || "";
 }
 
-function verifyValue(element: HTMLElement, value: string): void {
-  if (normalizedValue(readControlValue(element)) !== normalizedValue(value)) throw new AdapterError("field_verification_failed");
+async function waitForStableValue(element: HTMLElement, value: string, labels: readonly string[] = [], timeoutMs = 1_800): Promise<void> {
+  const wanted = [value, ...labels].map(normalizedValue).filter(Boolean);
+  const deadline = Date.now() + timeoutMs;
+  let stableSince = 0;
+  while (Date.now() < deadline) {
+    const rawCurrent = readControlValue(element);
+    const current = normalizedValue(rawCurrent);
+    const matches = parseDate(value) && (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)
+      ? dateValuesMatch(rawCurrent, value)
+      : element.matches(".hd-select")
+      ? controlValueMatches(element, value, labels)
+      : wanted.length === 0
+        ? current.length === 0
+        : wanted.some((item) => current === item || current.includes(item));
+    if (matches) {
+      if (!stableSince) stableSince = Date.now();
+      if (Date.now() - stableSince >= 50) {
+        return;
+      }
+    } else {
+      stableSince = 0;
+    }
+    await waitForDomUpdate(1);
+  }
+  throw new AdapterError("field_verification_failed");
 }
 
 function calendarWrapper(element: HTMLElement): HTMLElement | null {
@@ -318,9 +433,37 @@ function calendarWrapper(element: HTMLElement): HTMLElement | null {
 }
 
 function parseDate(value: string): { year: number; month: number; day: number } | null {
-  const match = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/.exec(value.trim());
+  // The application normally sends YYYY-MM-DD. Accept an ISO timestamp or
+  // slash-separated value as well, but always choose the date through the
+  // official picker so its Vue model receives the timestamp it expects.
+  const match = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:$|T|\s)/.exec(value.trim());
   if (!match) return null;
   return { year: Number(match[1]), month: Number(match[2]), day: Number(match[3]) };
+}
+
+function dateValuesMatch(actual: string, expected: string): boolean {
+  if (normalizedValue(actual) === normalizedValue(expected)) return true;
+  const actualDate = parseDate(actual);
+  const expectedDate = parseDate(expected);
+  return Boolean(actualDate && expectedDate
+    && actualDate.year === expectedDate.year
+    && actualDate.month === expectedDate.month
+    && actualDate.day === expectedDate.day);
+}
+
+async function waitForDateInputValue(input: HTMLInputElement, expected: string, timeoutMs = 3_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let stableSince = 0;
+  while (Date.now() < deadline) {
+    if (dateValuesMatch(input.value, expected)) {
+      if (!stableSince) stableSince = Date.now();
+      if (Date.now() - stableSince >= 80) return;
+    } else {
+      stableSince = 0;
+    }
+    await waitForDomUpdate(1);
+  }
+  throw new AdapterError("field_verification_failed", "日期选择后官网状态未确认");
 }
 
 function dateText(element: Element): string {
@@ -332,32 +475,159 @@ function dateCellIsDisabled(cell: Element): boolean {
   return cell.getAttribute("aria-disabled") === "true" || /disabled|other-month|prev-month|next-month/.test(className);
 }
 
+function isOpenCalendar(element: Element): boolean {
+  if (!isVisible(element)) return false;
+  const node = element as HTMLElement;
+  const style = typeof window !== "undefined" ? window.getComputedStyle(node) : null;
+  if (node.matches(".datepicker-main")) {
+    // The official R11 date picker keeps the panel mounted and toggles only
+    // the `open` class. `display !== none` is therefore not enough to tell an
+    // open panel from a closed one.
+    return node.classList.contains("open")
+      && style?.display !== "none"
+      && style?.visibility !== "hidden"
+      && style?.opacity !== "0";
+  }
+  return style?.display !== "none"
+    && style?.visibility !== "hidden"
+    && style?.opacity !== "0"
+    && style?.maxHeight !== "0px";
+}
+
 function visibleCalendar(root: ParentNode): HTMLElement | null {
   const candidates = Array.from(root.querySelectorAll(".datepicker-main,.datepicker-panel,.date-picker-panel,.calendar,[role='dialog']"));
-  return (candidates.find((candidate) => isVisible(candidate)) as HTMLElement | undefined) || null;
+  return (candidates.find((candidate) => isOpenCalendar(candidate)) as HTMLElement | undefined) || null;
 }
 
 function calendarMonth(root: ParentNode): { year: number; month: number } | null {
   const calendar = visibleCalendar(root);
   if (!calendar) return null;
-  const text = calendar.textContent || "";
-  const match = /(20\d{2})\D{0,6}(1[0-2]|0?[1-9])\D/.exec(text);
-  return match ? { year: Number(match[1]), month: Number(match[2]) } : null;
+  // The official non-NB picker keeps all 401 year options mounted inside the
+  // hidden year menu. Reading `calendar.textContent` therefore finds 2000
+  // before it finds the displayed 2026 header. Read the two visible header
+  // controls first and only use the compact NB header as a fallback.
+  const selects = Array.from(calendar.querySelectorAll(".datePickerSelect")).filter(isVisible);
+  if (selects.length >= 2) {
+    const yearText = (selects[0].querySelector(".datePickerSelectText")?.textContent || "").trim();
+    const monthText = (selects[1].querySelector(".datePickerSelectText")?.textContent || "").trim();
+    const yearMatch = /(20\d{2})/.exec(yearText);
+    const monthMatch = /(1[0-2]|0?[1-9])\s*月/.exec(monthText);
+    if (yearMatch && monthMatch) return { year: Number(yearMatch[1]), month: Number(monthMatch[1]) };
+  }
+  const headerText = calendar.querySelector(".datepicker-header")?.textContent || "";
+  const headerMatch = /(20\d{2})\s*年\s*(1[0-2]|0?[1-9])\s*月/.exec(headerText);
+  return headerMatch ? { year: Number(headerMatch[1]), month: Number(headerMatch[2]) } : null;
 }
 
 function calendarNavigation(root: ParentNode, direction: "previous" | "next"): HTMLElement | null {
   const calendar = visibleCalendar(root);
   if (!calendar) return null;
-  const candidates = Array.from(calendar.querySelectorAll("button,a,[role='button'],[class*='month'],[class*='arrow'],[class*='prev'],[class*='next']")).filter(isVisible);
+  // R11 has four spans with the same class: previous year, next year,
+  // previous month and next month. Selecting by “prev/next” text is not
+  // enough because the SVGs have no accessible label. The second control in
+  // each direction is the month control. Return its SVG because the official
+  // Vue click listener is attached to the SVG, not the wrapper span.
+  const className = direction === "previous" ? ".datepicke-btn-prve" : ".datepicke-btn-next";
+  const matches = Array.from(calendar.querySelectorAll(`.datepicker-header ${className}`)).filter(isVisible);
+  if (matches.length >= 2) {
+    const monthButton = matches[1] as HTMLElement;
+    return (monthButton.querySelector("svg") as HTMLElement | null) || monthButton;
+  }
+
+  // Keep a semantic fallback for older portal builds that expose only one
+  // previous/next button with an aria-label or title.
+  const candidates = Array.from(calendar.querySelectorAll("button,a,[role='button'],[class*='month'],[class*='arrow'],[class*='prev'],[class*='prve'],[class*='next']")).filter(isVisible);
   const terms = direction === "previous"
-    ? ["上一月", "上个月", "上一年", "prev", "previous", "<", "‹"]
-    : ["下一月", "下个月", "下一年", "next", ">", "›"];
-  const matches = candidates.filter((candidate) => {
+    ? ["上一月", "上个月", "prev", "prve", "previous", "<", "‹"]
+    : ["下一月", "下个月", "next", ">", "›"];
+  const semanticMatches = candidates.filter((candidate) => {
     const text = normalizeVisibleText(candidate.getAttribute("aria-label") || candidate.getAttribute("title") || candidate.textContent || "");
-    const className = typeof (candidate as HTMLElement).className === "string" ? normalizeVisibleText((candidate as HTMLElement).className) : "";
-    return terms.some((term) => text.includes(normalizeVisibleText(term)) || className.includes(normalizeVisibleText(term)));
+    const candidateClass = typeof (candidate as HTMLElement).className === "string" ? normalizeVisibleText((candidate as HTMLElement).className) : "";
+    return terms.some((term) => text.includes(normalizeVisibleText(term)) || candidateClass.includes(normalizeVisibleText(term)));
   });
-  return matches.length === 1 ? matches[0] as HTMLElement : null;
+  return semanticMatches.length === 1 ? semanticMatches[0] as HTMLElement : null;
+}
+
+function datePickerSelectFor(calendar: HTMLElement, target: { year: number; month: number }, part: "year" | "month"): HTMLElement | null {
+  const selects = Array.from(calendar.querySelectorAll(".datePickerSelect")).filter(isVisible) as HTMLElement[];
+  if (selects.length < 2) return null;
+  const expectedValue = part === "year" ? String(target.year) : String(target.month);
+  const expectedLabels = part === "year"
+    ? [`${target.year}年`]
+    : [`${target.month}月`, `${String(target.month).padStart(2, "0")}月`];
+  const matches = selects.filter((select) => {
+    const options = Array.from(select.querySelectorAll(".datePickerSelectMenu .menu"));
+    return options.some((option) => {
+      const value = option.getAttribute("value") || "";
+      const label = option.getAttribute("label") || option.textContent || "";
+      return value === expectedValue || expectedLabels.some((item) => normalizeVisibleText(label) === normalizeVisibleText(item));
+    });
+  });
+  return matches.length === 1 ? matches[0] : null;
+}
+
+function datePickerSelectText(select: HTMLElement): HTMLElement | null {
+  return select.querySelector(".datePickerSelectText") as HTMLElement | null;
+}
+
+function datePickerSelectMenu(select: HTMLElement): HTMLElement | null {
+  return select.querySelector(".datePickerSelectMenu") as HTMLElement | null;
+}
+
+function datePickerMenuIsOpen(menu: HTMLElement): boolean {
+  if (!isVisible(menu)) return false;
+  const style = typeof window !== "undefined" ? window.getComputedStyle(menu) : null;
+  return style?.display !== "none";
+}
+
+async function chooseDatePickerPart(calendar: HTMLElement, target: { year: number; month: number }, part: "year" | "month"): Promise<boolean> {
+  const select = datePickerSelectFor(calendar, target, part);
+  if (!select) return false;
+  const expectedValue = part === "year" ? String(target.year) : String(target.month);
+  const expectedLabels = part === "year"
+    ? [`${target.year}年`]
+    : [`${target.month}月`, `${String(target.month).padStart(2, "0")}月`];
+  const currentText = datePickerSelectText(select)?.textContent || "";
+  const currentMenu = datePickerSelectMenu(select);
+  const currentOption = currentMenu
+    ? Array.from(currentMenu.querySelectorAll(".menu")).find((option) => option.classList.contains("hd_activeSelect"))
+    : null;
+  const alreadySelected = currentOption
+    ? ((currentOption.getAttribute("value") || "") === expectedValue || expectedLabels.some((item) => normalizeVisibleText(currentOption.getAttribute("label") || currentOption.textContent || "") === normalizeVisibleText(item)))
+    : expectedLabels.some((item) => normalizeVisibleText(currentText) === normalizeVisibleText(item));
+  if (alreadySelected) return true;
+  if (!currentMenu || !datePickerSelectText(select)) return false;
+
+  // This is a real custom select, not a native <select>: open once, wait for
+  // its menu, click one exact menu item, then verify that the menu's active
+  // marker and displayed text changed. Never click the header again while
+  // waiting; a second click would simply close the official menu.
+  datePickerSelectText(select)?.click();
+  const openDeadline = Date.now() + 2_500;
+  while (Date.now() < openDeadline && !datePickerMenuIsOpen(currentMenu)) await waitForDomUpdate(1);
+  if (!datePickerMenuIsOpen(currentMenu)) throw new AdapterError("field_verification_failed", `${part === "year" ? "年份" : "月份"}菜单未打开`);
+
+  const options = Array.from(currentMenu.querySelectorAll(".menu")).filter(isVisible);
+  const matches = options.filter((option) => {
+    const optionValue = option.getAttribute("value") || "";
+    const optionLabel = option.getAttribute("label") || option.textContent || "";
+    return optionValue === expectedValue || expectedLabels.some((item) => normalizeVisibleText(optionLabel) === normalizeVisibleText(item));
+  });
+  if (matches.length !== 1) throw new AdapterError(matches.length ? "field_ambiguous" : "field_not_found", `${part === "year" ? "年份" : "月份"}选项无法确认`);
+  (matches[0] as HTMLElement).click();
+
+  const selectedDeadline = Date.now() + 2_500;
+  while (Date.now() < selectedDeadline) {
+    const text = datePickerSelectText(select)?.textContent || "";
+    const active = Array.from(currentMenu.querySelectorAll(".menu")).find((option) => option.classList.contains("hd_activeSelect"));
+    const selected = active && ((active.getAttribute("value") || "") === expectedValue || expectedLabels.some((item) => normalizeVisibleText(active.getAttribute("label") || active.textContent || "") === normalizeVisibleText(item)));
+    const displayed = expectedLabels.some((item) => normalizeVisibleText(text) === normalizeVisibleText(item));
+    if (selected || displayed) {
+      if (!datePickerMenuIsOpen(currentMenu)) return true;
+    }
+    await waitForDomUpdate(1);
+  }
+  throw new AdapterError("field_verification_failed", `${part === "year" ? "年份" : "月份"}选择后官网状态未确认`);
 }
 
 async function setDatePickerValue(element: HTMLElement, value: string): Promise<void> {
@@ -365,39 +635,78 @@ async function setDatePickerValue(element: HTMLElement, value: string): Promise<
   const wrapper = calendarWrapper(element);
   if (!target || !wrapper) {
     if (element instanceof HTMLInputElement && !element.readOnly && !isDisabled(element)) {
-      setInputValue(element, value);
-      verifyValue(element, value);
+      await setInputValue(element, value);
+      await waitForStableValue(element, value);
       return;
     }
     throw new AdapterError("field_verification_failed", "日期格式或日期控件无法确认");
   }
   const input = wrapper.querySelector("input") as HTMLInputElement | null;
-  if (input && normalizedValue(dateText(input)) === normalizedValue(value)) return;
   if (isDisabled(input || wrapper)) {
-    if (input && normalizedValue(dateText(input)) === normalizedValue(value)) return;
+    if (input && dateValuesMatch(dateText(input), value)) return;
     throw new AdapterError("field_verification_failed", "日期控件已禁用且内容不一致");
   }
-  (input || wrapper).click();
-  await waitForDomUpdate(2);
+  // A retry may enter while the panel is still open. Clicking an already-open
+  // R11 picker would close it and make the following day lookup race the
+  // component. Open it only when no open panel is present.
+  if (!visibleCalendar(wrapper)) (input || wrapper).click();
+  const openDeadline = Date.now() + 3_000;
+  while (Date.now() < openDeadline && !visibleCalendar(wrapper)) await waitForDomUpdate(1);
+  if (!visibleCalendar(wrapper)) throw new AdapterError("field_verification_failed", "日期日历未打开");
+
+  const currentCalendar = visibleCalendar(wrapper);
+  if (!currentCalendar) throw new AdapterError("field_verification_failed", "日期日历未打开");
+  const currentMonth = calendarMonth(wrapper);
+  if (!currentMonth || currentMonth.year !== target.year || currentMonth.month !== target.month) {
+    // The current R11 picker exposes year/month menus (the exact controls
+    // shown in the user's screenshot). Prefer those menus so a date far from
+    // the current month does not require dozens of arrow clicks. A legacy
+    // picker without those menus falls back to the exact month arrow pair.
+    const selectedYear = await chooseDatePickerPart(currentCalendar, target, "year");
+    const selectedMonth = await chooseDatePickerPart(currentCalendar, target, "month");
+    if (!selectedYear || !selectedMonth) {
+      // At most 24 bounded month changes; no click is issued if the current
+      // month cannot be read or the official controls are ambiguous.
+      const maxNavigationAttempts = 24;
+      for (let attempt = 0; attempt < maxNavigationAttempts; attempt += 1) {
+        const visibleMonth = calendarMonth(wrapper);
+        if (visibleMonth && visibleMonth.year === target.year && visibleMonth.month === target.month) break;
+        const currentIndex = visibleMonth ? visibleMonth.year * 12 + visibleMonth.month : target.year * 12 + target.month;
+        const targetIndex = target.year * 12 + target.month;
+        const navigation = calendarNavigation(wrapper, targetIndex < currentIndex ? "previous" : "next");
+        if (!navigation) throw new AdapterError("field_verification_failed", "日期月份导航无法确认");
+        navigation.click();
+        await waitForDomUpdate(2);
+      }
+      const afterNavigation = calendarMonth(wrapper);
+      if (!afterNavigation || afterNavigation.year !== target.year || afterNavigation.month !== target.month) {
+        throw new AdapterError("field_verification_failed", "日期月份切换后官网状态未确认");
+      }
+    } else {
+      const afterSelect = calendarMonth(wrapper);
+      if (!afterSelect || afterSelect.year !== target.year || afterSelect.month !== target.month) {
+        throw new AdapterError("field_verification_failed", "日期年月选择后官网状态未确认");
+      }
+    }
+  }
   const maxAttempts = 24;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const calendar = visibleCalendar(wrapper.ownerDocument || document);
+    const calendar = visibleCalendar(wrapper);
     if (!calendar) throw new AdapterError("field_verification_failed", "日期日历未打开");
     const cells = Array.from(calendar.querySelectorAll("td,[role='gridcell']"))
       .filter((cell) => isVisible(cell) && !dateCellIsDisabled(cell))
       .filter((cell) => /^0?\d{1,2}$/.test((cell.textContent || "").trim()));
     const matches = cells.filter((cell) => Number((cell.textContent || "").trim()) === target.day);
-    const visibleMonth = calendarMonth(wrapper.ownerDocument || document);
-    if ((!visibleMonth || (visibleMonth.year === target.year && visibleMonth.month === target.month)) && matches.length === 1) {
+    const visibleMonth = calendarMonth(wrapper);
+    if (visibleMonth && visibleMonth.year === target.year && visibleMonth.month === target.month && matches.length === 1) {
       (matches[0] as HTMLElement).click();
-      await waitForDomUpdate(2);
-      if (input && normalizedValue(dateText(input)) !== normalizedValue(value)) throw new AdapterError("field_verification_failed", "日期选择后校验不一致");
+      if (input) await waitForDateInputValue(input, value);
       return;
     }
     const targetMonthIndex = target.year * 12 + target.month;
     const currentMonthIndex = visibleMonth ? visibleMonth.year * 12 + visibleMonth.month : targetMonthIndex;
     const direction = targetMonthIndex < currentMonthIndex ? "previous" : "next";
-    const navigation = calendarNavigation(wrapper.ownerDocument || document, direction);
+    const navigation = calendarNavigation(wrapper, direction);
     if (!navigation) throw new AdapterError("field_verification_failed", "日期月份导航无法确认");
     navigation.click();
     await waitForDomUpdate(2);
@@ -416,6 +725,7 @@ async function setControlValue(element: HTMLElement, value: string, labels: read
   const dateWrapper = calendarWrapper(element);
   if (dateWrapper) {
     await setDatePickerValue(element, value);
+    await waitForStableValue(element, value);
     return;
   }
   if (element instanceof HTMLSelectElement) {
@@ -424,24 +734,24 @@ async function setControlValue(element: HTMLElement, value: string, labels: read
     if (!option) throw new AdapterError("field_verification_failed");
     element.value = option.value;
     dispatchValue(element);
-    if (normalizedValue(element.value) !== normalizedValue(option.value)) throw new AdapterError("field_verification_failed");
+    await waitForStableValue(element, option.value, [option.textContent || ""]);
     return;
   }
   if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
-    setInputValue(element, value);
-    verifyValue(element, value);
+    await setInputValue(element, value);
+    await waitForStableValue(element, value);
     return;
   }
   const nested = element.querySelector("input,textarea") as HTMLInputElement | HTMLTextAreaElement | null;
   if (nested && !nested.readOnly) {
-    setInputValue(nested, value);
-    verifyValue(nested, value);
+    await setInputValue(nested, value);
+    await waitForStableValue(nested, value);
     return;
   }
   if (element.isContentEditable || element.getAttribute("contenteditable") === "true") {
     element.textContent = value;
     dispatchValue(element);
-    verifyValue(element, value);
+    await waitForStableValue(element, value);
     return;
   }
   throw new AdapterError("field_verification_failed", "控件不是可写文本控件");
@@ -451,78 +761,156 @@ function controlContainer(element: Element): HTMLElement {
   return (element.closest(`${FIELD_CONTEXT_SELECTOR},.upload-box,.upload-item,.file-item,.formGroup,.hdUpload,.hd-upload,.upLoadBox,[class*='hdUpload'],[class*='upLoad']`) || element.parentElement || element) as HTMLElement;
 }
 
+function choiceTexts(element: Element): string[] {
+  return [
+    element.textContent || "",
+    element.getAttribute("aria-label") || "",
+    element.getAttribute("title") || "",
+    element.getAttribute("label") || "",
+    element.getAttribute("data-label") || "",
+    element.getAttribute("data-value") || "",
+    element.getAttribute("value") || "",
+  ].map(normalizeVisibleText).filter(Boolean);
+}
+
 function choiceText(element: Element): string {
-  return normalizeVisibleText(element.textContent || element.getAttribute("aria-label") || element.getAttribute("value") || "");
+  return choiceTexts(element)[0] || "";
 }
 
 function optionMatches(element: Element, wanted: readonly string[]): boolean {
-  const text = choiceText(element);
-  return wanted.some((item) => text === normalizeVisibleText(item) || text.includes(normalizeVisibleText(item)));
+  const texts = choiceTexts(element);
+  return wanted.some((item) => {
+    const target = normalizeVisibleText(item);
+    return texts.some((text) => text === target || text.includes(target));
+  });
+}
+
+function customSelectDropdown(control: HTMLElement): HTMLElement | null {
+  return control.querySelector(".dropdown,.select-dropdown,.hd-select-dropdown") as HTMLElement | null;
+}
+
+function controlValueMatches(element: HTMLElement, value: string, labels: readonly string[]): boolean {
+  const wanted = [value, ...labels];
+  const optionNodes = Array.from(element.querySelectorAll(".hd-option,[role='option'],option"));
+  const selectedNodes = optionNodes.filter((option) => option.matches(".selected,[aria-selected='true']:not([aria-selected='false']),:checked"));
+  if (selectedNodes.some((option) => optionMatches(option, wanted))) return true;
+
+  // If the official option list is mounted but no matching option is marked
+  // selected, a matching display label is not authoritative. This is the
+  // exact failure mode of Vue-controlled R11 selects after a native DOM
+  // write: the box shows text while the form model remains empty.
+  const current = normalizedValue(readControlValue(element));
+  const displayMatches = wanted.some((item) => {
+    const wanted = normalizedValue(item);
+    return Boolean(wanted) && (current === wanted || current.includes(wanted));
+  });
+  const hasOfficialOptionMarkup = optionNodes.some((option) => option.matches(".hd-option"));
+  const dropdown = customSelectDropdown(element);
+  if (!hasOfficialOptionMarkup && displayMatches && !(dropdown && isVisible(dropdown))) return true;
+
+  // Vue can update the selected option and close the menu before the display
+  // span receives its new label. Treat the selected option as authoritative
+  // during that short render window; otherwise a manual selection can be
+  // mistaken for an empty field and the next poll would reopen the menu.
+  return false;
+}
+
+function selectedControlValueMatches(element: HTMLElement, value: string, labels: readonly string[]): boolean {
+  const wanted = [value, ...labels];
+  return Array.from(element.querySelectorAll(".hd-option,[role='option'],option"))
+    .filter((option) => option.matches(".selected,[aria-selected='true']:not([aria-selected='false']),:checked"))
+    .some((option) => optionMatches(option, wanted));
 }
 
 async function chooseCustomSelect(control: HTMLElement, root: ParentNode, value: string, labels: readonly string[]): Promise<void> {
   const box = (control.querySelector(".box,[role='combobox'],.select-box") || control) as HTMLElement;
   const wanted = [value, ...labels];
-  const current = control.querySelector(".box,[role='combobox'],.select-box")?.textContent || "";
-  const normalizedCurrent = normalizeVisibleText(current);
-  if (wanted.some((item) => normalizedCurrent === normalizeVisibleText(item) || normalizedCurrent.includes(normalizeVisibleText(item)))) return;
-  box.click();
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    const localOptions = uniqueElements([
-      ...Array.from(control.querySelectorAll(".hd-option,[role='option'],.option,li")),
-    ]).filter(isVisible);
-    const optionCandidates = localOptions.length
-      ? localOptions
-      : uniqueElements(Array.from(root.querySelectorAll(".hd-option,[role='option']")).filter(isVisible));
-    const exactValue = optionCandidates.filter((option) => choiceText(option) === normalizeVisibleText(value));
-    const exact = exactValue.length ? exactValue : optionCandidates.filter((option) => labels.some((item) => choiceText(option) === normalizeVisibleText(item)));
+  const dropdown = customSelectDropdown(control);
+  if (!dropdown) throw new AdapterError("field_not_found", `下拉选项无法确认：${value}`);
+
+  // Only an option marked selected by the portal is enough to skip the click.
+  // A visible box label alone may be stale DOM text from a previous attempt.
+  if (selectedControlValueMatches(control, value, labels)) return;
+
+  // R11's `.box` is a toggle. The previous implementation retried this click
+  // while an async list was empty, which alternated between opening and
+  // closing the menu. The official component is stable once opened: click it
+  // exactly once, poll the same menu for its options, click one exact option,
+  // then verify the selected marker. If that contract is not met, stop safely
+  // and let the user retry instead of clicking indefinitely.
+  const menuWasAlreadyOpen = isVisible(dropdown);
+  if (!menuWasAlreadyOpen) box.click();
+  const openDeadline = Date.now() + 2_500;
+  while (Date.now() < openDeadline && !isVisible(dropdown)) await waitForDomUpdate(1);
+  if (!isVisible(dropdown)) throw new AdapterError("field_verification_failed", `下拉菜单未打开：${value}`);
+
+  // R11 loads country, identity and software-classification options after the
+  // component is mounted. Keep polling this control's own visible menu; do
+  // not fall back to another open select on the page.
+  const optionsDeadline = Date.now() + 8_000;
+  while (Date.now() < optionsDeadline) {
+    if (selectedControlValueMatches(control, value, labels)) return;
+    if (!isVisible(dropdown)) throw new AdapterError("field_verification_failed", `下拉菜单在选择前关闭：${value}`);
+    const optionCandidates = uniqueElements(Array.from(dropdown.querySelectorAll(".hd-option,[role='option'],.option,li")).filter(isVisible));
+    const exactValue = optionCandidates.filter((option) => (option.getAttribute("value") || option.getAttribute("data-value") || "") === value);
+    const exact = exactValue.length
+      ? exactValue
+      : optionCandidates.filter((option) => [value, ...labels].some((item) => choiceText(option) === normalizeVisibleText(item)));
     const matches = exact.length ? exact : optionCandidates.filter((option) => optionMatches(option, wanted));
+    if (matches.length > 1) throw new AdapterError("field_ambiguous", `下拉选项无法唯一确认：${value}`);
     if (matches.length === 1) {
       (matches[0] as HTMLElement).click();
-      await waitForDomUpdate(2);
-      const selected = control.querySelector(".hd-option.selected,[role='option'][aria-selected='true'],.option.selected");
-      const visibleText = control.querySelector(".box,.label,[role='combobox']")?.textContent || selected?.textContent || "";
-      if (!optionMatches({ textContent: visibleText } as Element, wanted)) throw new AdapterError("field_verification_failed");
-      return;
+      const selectedDeadline = Date.now() + 2_500;
+      while (Date.now() < selectedDeadline) {
+        if (selectedControlValueMatches(control, value, labels)) return;
+        await waitForDomUpdate(1);
+      }
+      throw new AdapterError("field_verification_failed", `下拉选项点击后未确认：${value}`);
     }
-    if (matches.length > 1) throw new AdapterError("field_ambiguous", `下拉选项无法唯一确认：${value}`);
     await waitForDomUpdate(2);
-    // Some portal builds mount the dropdown lazily and leave the first
-    // click with an empty/closed menu. Re-open only when it is visibly
-    // closed; never toggle an already-open menu while options are loading.
-    const dropdown = control.querySelector(".dropdown,.select-dropdown,.hd-select-dropdown") as HTMLElement | null;
-    if (dropdown && !isVisible(dropdown)) box.click();
   }
   throw new AdapterError("field_not_found", `下拉选项无法确认：${value}`);
 }
 
 async function chooseCascader(control: HTMLElement, root: ParentNode, values: readonly string[]): Promise<void> {
-  if (isDisabled(control)) {
-    const current = normalizeVisibleText(control.textContent || "");
+  const cascader = control.matches(".hd-cascader")
+    ? control
+    : (control.querySelector(".hd-cascader") as HTMLElement | null) || control;
+  if (isDisabled(cascader)) {
+    const current = normalizeVisibleText(readControlValue(cascader));
     if (!values.every((value) => current.includes(normalizeVisibleText(value)))) throw new AdapterError("field_verification_failed");
     return;
   }
-  const label = (control.querySelector(".label,[role='combobox'],.box") || control) as HTMLElement;
+  const label = (cascader.querySelector(".label,[role='combobox'],.box") || cascader) as HTMLElement;
   label.click();
   await waitForDomUpdate(2);
   for (const value of values) {
-    const localOptions = uniqueElements([
-      ...Array.from(control.querySelectorAll(".dropdown li,.dropdown .option,[role='option'],.options li")),
-    ]).filter(isVisible);
-    const options = localOptions.length
-      ? localOptions
-      : uniqueElements(Array.from(root.querySelectorAll(".hd-cascader .dropdown li,.hd-cascader [role='option']")).filter(isVisible));
-    const matches = options.filter((option) => choiceText(option) === normalizeVisibleText(value));
-    if (matches.length !== 1) throw new AdapterError(matches.length ? "field_ambiguous" : "field_not_found", `级联选项无法唯一确认：${value}`);
-    (matches[0] as HTMLElement).click();
-    await waitForDomUpdate(2);
+    let selected = false;
+    for (let attempt = 0; attempt < 120; attempt += 1) {
+      const localOptions = uniqueElements([
+        ...Array.from(cascader.querySelectorAll(".dropdown li,.dropdown .option,[role='option'],.options li")),
+      ]).filter(isVisible);
+      const options = localOptions.length
+        ? localOptions
+        : uniqueElements(Array.from(root.querySelectorAll(".hd-cascader .dropdown li,.hd-cascader [role='option'],.cascader .dropdown li,.cascader [role='option']")).filter(isVisible));
+      const matches = options.filter((option) => choiceText(option) === normalizeVisibleText(value));
+      if (matches.length > 1) throw new AdapterError("field_ambiguous", `级联选项无法唯一确认：${value}`);
+      if (matches.length === 1) {
+        (matches[0] as HTMLElement).click();
+        selected = true;
+        await waitForDomUpdate(3);
+        break;
+      }
+      await waitForDomUpdate(2);
+    }
+    if (!selected) throw new AdapterError("field_not_found", `级联选项无法确认：${value}`);
   }
-  const current = normalizeVisibleText(control.textContent || "");
+  const current = normalizeVisibleText(readControlValue(cascader));
   if (!values.every((value) => current.includes(normalizeVisibleText(value)))) throw new AdapterError("field_verification_failed");
 }
 
 function choiceContainer(control: HTMLElement): HTMLElement {
-  return control.matches(".hd-select,.hd-cascader,.hd-radio-group,[role='radiogroup'],.radio-group,.hd-checkbox-group,.checkbox-group")
+  return control.matches(".hd-select,.hd-cascader,.cascader,.hd-radio-group,[role='radiogroup'],.radio-group,.hd-checkbox-group,.checkbox-group")
     ? control
     : controlContainer(control);
 }
@@ -537,7 +925,7 @@ async function choose(root: ParentNode, aliases: readonly string[], value: strin
     await chooseCustomSelect(control, root, value, labels);
     return;
   }
-  if (control.matches(".hd-cascader")) {
+  if (control.matches(".hd-cascader,.cascader")) {
     await chooseCascader(control, root, labels.length ? labels : [value]);
     return;
   }
@@ -560,6 +948,22 @@ async function choose(root: ParentNode, aliases: readonly string[], value: strin
   }
   const checked = input ? input.checked : choice.getAttribute("aria-checked") === "true" || choice.getAttribute("aria-selected") === "true" || choice.classList.contains("selected") || choice.classList.contains("active");
   if (!checked) throw new AdapterError("field_verification_failed");
+  if (input) await waitForChecked(input);
+}
+
+async function waitForChecked(input: HTMLInputElement, timeoutMs = 1_800): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let stableSince = 0;
+  while (Date.now() < deadline) {
+    if (input.checked) {
+      if (!stableSince) stableSince = Date.now();
+      if (Date.now() - stableSince >= 50) return;
+    } else {
+      stableSince = 0;
+    }
+    await waitForDomUpdate(1);
+  }
+  throw new AdapterError("field_verification_failed");
 }
 
 async function fillText(root: ParentNode, aliases: readonly string[], value: string): Promise<void> {
@@ -584,7 +988,7 @@ async function fillTextOrChoice(root: ParentNode, aliases: readonly string[], va
 async function waitForDomUpdate(rounds = 1): Promise<void> {
   const count = Math.max(1, rounds);
   for (let index = 0; index < count; index += 1) {
-    await new Promise<void>((resolve) => window.setTimeout(resolve, 80));
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 24));
   }
 }
 
@@ -605,14 +1009,42 @@ function holderRows(root: ParentNode): HTMLElement[] {
   return rows;
 }
 
-function findButton(root: ParentNode, aliases: readonly string[]): HTMLElement {
-  const buttons = uniqueElements(Array.from(root.querySelectorAll("button,a,[role='button'],input[type='button'],input[type='submit']")).filter(isVisible).filter((element) => !isDisabled(element)));
+function findButton(root: ParentNode, aliases: readonly string[], includeDisabled = false): HTMLElement {
+  const buttons = uniqueElements(Array.from(root.querySelectorAll("button,a,[role='button'],input[type='button'],input[type='submit']"))
+    .filter(isVisible)
+    .filter((element) => includeDisabled || !isDisabled(element)));
   const scored = buttons.map((element) => ({ element, score: scoreAction(element, aliases) })).filter((item) => item.score > 0);
   if (!scored.length) throw new AdapterError("field_not_found");
   const max = Math.max(...scored.map((item) => item.score));
   const winners = scored.filter((item) => item.score === max);
   if (winners.length !== 1) throw new AdapterError("field_ambiguous");
   return winners[0].element as HTMLElement;
+}
+
+function findActionIfPresent(root: ParentNode, aliases: readonly string[]): HTMLElement | null {
+  const candidates = uniqueElements(Array.from(root.querySelectorAll("button,a,[role='button'],[role='link'],input[type='button'],input[type='submit'],[class*='hd-link']"))
+    .filter(isVisible)
+    .filter((element) => !isDisabled(element)));
+  const scored = candidates.map((element) => ({ element, score: scoreAction(element, aliases) })).filter((item) => item.score > 0);
+  if (!scored.length) return null;
+  const max = Math.max(...scored.map((item) => item.score));
+  const winners = scored.filter((item) => item.score === max).map((item) => item.element);
+  if (winners.length !== 1) throw new AdapterError("field_ambiguous", aliases.join("/"));
+  return winners[0] as HTMLElement;
+}
+
+async function saveHolderRow(row: HTMLElement): Promise<void> {
+  const save = findActionIfPresent(row, ["保存"]);
+  // The first applicant row may already be populated and saved by R11 after
+  // the identity step. In that case there is no visible row-level save link.
+  if (!save) return;
+  save.click();
+  const deadline = Date.now() + 8_000;
+  while (Date.now() < deadline) {
+    if (!findActionIfPresent(row, ["保存"])) return;
+    await waitForDomUpdate(2);
+  }
+  throw new AdapterError("field_verification_failed", "著作权人信息尚未保存");
 }
 
 function bodyText(root: ParentNode): string {
@@ -628,8 +1060,52 @@ export function hasVisibleLoginPrompt(root: ParentNode = document): boolean {
 }
 
 export function hasApplicationForm(root: ParentNode = document): boolean {
-  const controls = Array.from(root.querySelectorAll(TEXT_CONTROL_SELECTOR)).filter(isVisible);
-  return controls.some((element) => scoreText(element, textFieldAliases.software_full_name || []) >= 30);
+  return hasSemanticCandidate(root, textFieldAliases.software_full_name || []);
+}
+
+function hasSemanticCandidate(root: ParentNode, aliases: readonly string[], selector = TEXT_CONTROL_SELECTOR): boolean {
+  return Array.from(root.querySelectorAll(selector))
+    .filter(isVisible)
+    .some((element) => scoreText(element, aliases) >= 30);
+}
+
+function hasChoiceCandidate(root: ParentNode, aliases: readonly string[]): boolean {
+  return choiceControls(root).some((element) => scoreText(element, aliases) >= 30);
+}
+
+/**
+ * These readiness checks intentionally only answer “has the portal rendered
+ * the controls yet?”. They do not validate values and do not replace the
+ * adapter's unique-field checks. R11 mounts each page in several Vue ticks;
+ * checking the full set prevents the first heading render from triggering a
+ * premature fill attempt.
+ */
+export function hasApplicationPageControls(root: ParentNode = document): boolean {
+  return hasSemanticCandidate(root, textFieldAliases.software_full_name || [])
+    && hasSemanticCandidate(root, textFieldAliases.version || [])
+    && hasChoiceCandidate(root, choiceAliases.rights_acquisition_method);
+}
+
+function hasCurrentR11ApplicationStructure(root: ParentNode): boolean {
+  // The old one-page compatibility layout also has software name/version and
+  // native selects. The current R11 page has radio groups for the rights
+  // scope, so use that extra structural signal only when the hash is absent
+  // or not one of the known routes.
+  return hasApplicationPageControls(root)
+    && choiceControls(root).some((control) => control.matches(".hd-radio-group,[role='radiogroup']") && scoreText(control, choiceAliases.rights_scope) >= 30);
+}
+
+export function hasDevelopmentPageControls(root: ParentNode = document): boolean {
+  const rows = holderRows(root);
+  return hasChoiceCandidate(root, textFieldAliases.software_category || [])
+    && hasChoiceCandidate(root, choiceAliases.development_method)
+    && rows.length > 0;
+}
+
+export function hasFeaturesPageControls(root: ParentNode = document): boolean {
+  return hasSemanticCandidate(root, textFieldAliases.development_hardware || [])
+    && hasSemanticCandidate(root, textFieldAliases.main_functions || [])
+    && hasChoiceCandidate(root, textFieldAliases.programming_language || []);
 }
 
 export function hasUploadControls(root: ParentNode = document): boolean {
@@ -699,6 +1175,9 @@ export function detectR11Page(root: ParentNode = document): R11Page {
   if (text.includes("软件开发信息")) return "development";
   if (text.includes("软件功能与特点")) return "features";
   if (text.includes("确认信息") || text.includes("提交材料清单")) return "confirm";
+  if (hasCurrentR11ApplicationStructure(root)) return "application";
+  if (hasDevelopmentPageControls(root)) return "development";
+  if (hasFeaturesPageControls(root)) return "features";
   if (hasUploadControls(root) && !hasApplicationForm(root)) return "materials";
   if (hasApplicationForm(root)) return "legacy";
   return "unknown";
@@ -760,7 +1239,7 @@ export class R11Adapter {
     await choose(this.root, choiceAliases.rights_acquisition_method, form.rights_acquisition_method, choiceLabels.rights_acquisition_method[form.rights_acquisition_method]);
     await waitForDomUpdate(2);
     if (form.rights_acquisition_method !== "original") {
-      const secondaryAliases = ["继受取得方式", "权利取得类型", "取得方式"];
+      const secondaryAliases = ["继受取得方式", "权利取得类型"];
       const secondary = findUniqueChoiceControlIfPresent(this.root, secondaryAliases);
       if (secondary) {
         const secondaryLabels = form.rights_acquisition_method === "transfer"
@@ -793,7 +1272,13 @@ export class R11Adapter {
       await fillText(this.root, textFieldAliases.first_publication_country || [], form.first_publication_country);
       await fillText(this.root, textFieldAliases.first_publication_city || [], form.first_publication_city);
     }
-    await this.fillHolders(form.copyright_holders, false);
+    // When the user chose “我是申请人”, R11 has already populated and
+    // locked the first owner row from the authenticated account. For single
+    // development that row is the only owner; for cooperative development,
+    // only the rows added by the user still need to be filled. Rewriting row
+    // 0 would clear dependent country/area/type fields and is the reason a
+    // page can appear filled while R11 still reports required-field errors.
+    await this.fillHolders(form.copyright_holders, false, form.application_method === "copyright_holder");
   }
 
   private async fillFeaturesPage(form: CopyrightFormData): Promise<void> {
@@ -827,12 +1312,12 @@ export class R11Adapter {
       // doing so can make the page look filled while programLanguage[0]
       // remains empty in the Vue model and the portal rejects 下一步.
       let options: HTMLElement[] = [];
-      for (let attempt = 0; attempt < 20; attempt += 1) {
+      for (let attempt = 0; attempt < 120; attempt += 1) {
         const labeledOptions = Array.from(group.querySelectorAll("label,button,[role='checkbox'],.hd-checkbox,.checkbox")).filter(isVisible);
         options = uniqueElements((labeledOptions.length
           ? labeledOptions
           : Array.from(group.querySelectorAll("input[type='checkbox']"))).filter(isVisible)) as HTMLElement[];
-        if (options.length || attempt === 19) break;
+        if (options.length || attempt === 119) break;
         await waitForDomUpdate(2);
       }
       const unknownTerms: string[] = [];
@@ -847,6 +1332,7 @@ export class R11Adapter {
           await waitForDomUpdate(1);
           const checked = input ? input.checked : option.getAttribute("aria-checked") === "true" || option.classList.contains("selected") || option.classList.contains("active");
           if (!checked) throw new AdapterError("field_verification_failed", `编程语言未选中：${term}`);
+          if (input) await waitForChecked(input);
           selected += 1;
         } else {
           unknownTerms.push(term);
@@ -920,18 +1406,22 @@ export class R11Adapter {
     return true;
   }
 
-  private async fillHolders(holders: CopyrightHolder[], legacy: boolean): Promise<void> {
+  private async fillHolders(holders: CopyrightHolder[], legacy: boolean, firstRowIsOfficialApplicant = false): Promise<void> {
     if (!holders.length) throw new AdapterError("field_not_found", "著作权人");
     let rows = holderRows(this.root);
-    while (rows.length < holders.length) {
+    const rowsNeeded = firstRowIsOfficialApplicant ? Math.max(1, holders.length) : holders.length;
+    while (rows.length < rowsNeeded) {
       const button = findButton(this.root, ["增加著作权人", "添加著作权人", "新增著作权人", "增加权利人"]);
       button.click();
       await waitForDomUpdate(3);
       rows = holderRows(this.root);
-      if (rows.length < holders.length) throw new AdapterError("portal_structure_changed", "著作权人行未完成渲染");
+      if (rows.length < rowsNeeded) throw new AdapterError("portal_structure_changed", "著作权人行未完成渲染");
     }
-    if (rows.length !== holders.length) throw new AdapterError("field_ambiguous", "著作权人行数无法确认");
-    for (const [index, holder] of holders.entries()) await this.fillHolderRow(rows[index], holder, legacy);
+    if (rows.length !== rowsNeeded) throw new AdapterError("field_ambiguous", "著作权人行数无法确认");
+    const firstFormIndex = firstRowIsOfficialApplicant ? 1 : 0;
+    for (let formIndex = firstFormIndex; formIndex < holders.length; formIndex += 1) {
+      await this.fillHolderRow(rows[formIndex], holders[formIndex], legacy);
+    }
   }
 
   private async fillHolderRow(row: HTMLElement, holder: CopyrightHolder, legacy: boolean): Promise<void> {
@@ -946,7 +1436,37 @@ export class R11Adapter {
       await fillText(row, holderAliases.province, holder.province);
       await fillText(row, holderAliases.city, holder.city);
       await fillOptionalText(row, holderAliases.birth_or_established_date, holder.birth_or_established_date || "");
+      await saveHolderRow(row);
       return;
+    }
+
+    // R11's owner controls are dependent: changing the country clears the
+    // area, changing the area refreshes the identity/document options, and
+    // changing the holder type refreshes the document type options. Fill in
+    // that dependency order so a later select cannot silently reset an
+    // earlier value in Vue's model.
+    await fillTextOrChoice(row, holderAliases.nationality, holder.nationality, [holder.nationality, "中国"]);
+
+    // The current R11 owner editor uses one lazy province/city cascader. It
+    // may expose the inner `.hd-cascader` without a useful “省市” label, so
+    // identify that structure before trying the older separate province and
+    // city controls. Otherwise the same cascader can be mistaken for both
+    // fields or be reported as missing.
+    const cascaders = choiceControls(row).filter((control) => control.matches(".hd-cascader,.cascader"));
+    if (cascaders.length > 1) throw new AdapterError("field_ambiguous", "著作权人省市");
+    if (cascaders.length === 1) {
+      await chooseCascader(cascaders[0], this.root, [holder.province, holder.city]);
+    } else {
+      const provinceControl = findUniqueChoiceControlIfPresent(row, holderAliases.province);
+      const cityControl = findUniqueChoiceControlIfPresent(row, holderAliases.city);
+      if (provinceControl && cityControl) {
+        await choose(row, holderAliases.province, holder.province, [holder.province]);
+        await choose(row, holderAliases.city, holder.city, [holder.city]);
+      } else {
+        const areaControl = findUniqueChoiceControlIfPresent(row, holderAliases.area);
+        if (!areaControl) throw new AdapterError("field_not_found", "著作权人省市");
+        await chooseCascader(areaControl, this.root, [holder.province, holder.city]);
+      }
     }
 
     const typeLabels = holder.holder_type === "person"
@@ -954,25 +1474,19 @@ export class R11Adapter {
       : [holder.category || "企业法人", "企业法人", "企业", "单位"];
     await fillTextOrChoice(row, holderAliases.holder_type, holder.category || holder.holder_type, typeLabels);
     await fillText(row, holderAliases.name, holder.name);
-    await fillTextOrChoice(row, holderAliases.document_type, holder.document_type, [holder.document_type, holder.holder_type === "person" ? "居民身份证" : "统一社会信用代码"]);
+    await fillTextOrChoice(row, holderAliases.document_type, holder.document_type, holderDocumentTypeLabels(holder));
     await fillText(row, holderAliases.document_number, holder.document_number);
-    await fillTextOrChoice(row, holderAliases.nationality, holder.nationality, [holder.nationality, "中国"]);
-    const provinceControl = findUniqueChoiceControlIfPresent(row, holderAliases.province);
-    const cityControl = findUniqueChoiceControlIfPresent(row, holderAliases.city);
-    if (provinceControl && cityControl) {
-      await choose(row, holderAliases.province, holder.province, [holder.province]);
-      await choose(row, holderAliases.city, holder.city, [holder.city]);
-    } else {
-      const areaControl = findUniqueChoiceControlIfPresent(row, holderAliases.area);
-      if (!areaControl) throw new AdapterError("field_not_found", "著作权人省市");
-      await chooseCascader(areaControl, this.root, [holder.province, holder.city]);
-    }
+    await saveHolderRow(row);
   }
 
   clickNext(): void {
-    const button = findButton(this.root, ["下一步"]);
+    // Keep the disabled button in the candidate set so an official validation
+    // state becomes a retryable verification error instead of a misleading
+    // “button/field not found” stop.
+    const button = findButton(this.root, ["下一步"], true);
     const text = normalizeVisibleText(button.textContent || "");
     if (text.includes("提交") || text.includes("申报") || text.includes("确认填报")) throw new AdapterError("portal_structure_changed", "拒绝点击最终提交按钮");
+    if (isDisabled(button)) throw new AdapterError("field_verification_failed", "官方页面仍在校验，下一步暂不可用");
     button.click();
   }
 
