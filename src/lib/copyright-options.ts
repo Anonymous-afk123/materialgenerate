@@ -11,17 +11,22 @@ export function isOfficialSoftwareCategory(value: string): value is SoftwareCate
   return SOFTWARE_CATEGORY_OPTIONS.includes(value.trim() as SoftwareCategory);
 }
 
-export const TARGET_INDUSTRY_OPTIONS = [
-  "通用/综合",
-  "互联网/电子商务",
-  "教育",
-  "医疗健康",
-  "金融",
-  "工业制造",
-  "物联网",
-  "人工智能",
-  "政务/公共服务",
-  "文化娱乐",
+export const TECHNICAL_FEATURE_OPTIONS = [
+  "APP",
+  "游戏软件",
+  "教育软件",
+  "金融软件",
+  "医疗软件",
+  "地理信息软件",
+  "云计算软件",
+  "信息安全软件",
+  "大数据软件",
+  "人工智能软件",
+  "VR软件",
+  "5G软件",
+  "小程序",
+  "物联网软件",
+  "智慧城市软件",
 ] as const;
 
 export const PROGRAMMING_LANGUAGE_OPTIONS = [

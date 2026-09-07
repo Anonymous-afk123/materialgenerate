@@ -16,6 +16,7 @@ import {
   parseChoiceSelection,
   serializeChoiceSelection,
   SOFTWARE_CATEGORY_OPTIONS,
+  TECHNICAL_FEATURE_OPTIONS,
 } from "../src/lib/copyright-options.ts";
 
 const mainFunctions = "功能描述".repeat(130);
@@ -26,6 +27,27 @@ test("choice fields preserve multiple presets and custom values", () => {
   assert.equal(selection.custom, "自研平台");
   assert.equal(serializeChoiceSelection(selection.selected, selection.custom), "应用软件、嵌入式软件、自研平台");
   assert.equal(serializeChoiceSelection(["应用软件", "应用软件"], "嵌入式软件、嵌入式软件"), "应用软件、嵌入式软件");
+});
+
+test("official software technical-feature presets are separate from free-text industry", () => {
+  assert.deepEqual([...TECHNICAL_FEATURE_OPTIONS], [
+    "APP",
+    "游戏软件",
+    "教育软件",
+    "金融软件",
+    "医疗软件",
+    "地理信息软件",
+    "云计算软件",
+    "信息安全软件",
+    "大数据软件",
+    "人工智能软件",
+    "VR软件",
+    "5G软件",
+    "小程序",
+    "物联网软件",
+    "智慧城市软件",
+  ]);
+  assert.equal(applicationFields.safeParse({ target_industry: "互联网/电子商务" }).success, true);
 });
 
 test("registration field limits are enforced while an empty draft remains valid", () => {

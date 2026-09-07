@@ -21,7 +21,7 @@ import {
 import {
   PROGRAMMING_LANGUAGE_OPTIONS,
   SOFTWARE_CATEGORY_OPTIONS,
-  TARGET_INDUSTRY_OPTIONS,
+  TECHNICAL_FEATURE_OPTIONS,
   parseChoiceSelection,
   serializeChoiceSelection,
 } from "@/lib/copyright-options";
@@ -55,6 +55,7 @@ interface MultiChoiceFieldProps {
   onChange: (value: string) => void;
   disabled?: boolean;
   maxLength?: number;
+  fullWidth?: boolean;
 }
 
 interface SingleChoiceFieldProps {
@@ -84,7 +85,7 @@ function SingleChoiceField({ id, label, value, options, onChange, disabled, hint
   );
 }
 
-function MultiChoiceField({ id, label, value, options, onChange, disabled, maxLength }: MultiChoiceFieldProps) {
+function MultiChoiceField({ id, label, value, options, onChange, disabled, maxLength, fullWidth }: MultiChoiceFieldProps) {
   const { selected: selectedOptions, custom: customValue } = parseChoiceSelection(value, options);
   const [limitErrorValue, setLimitErrorValue] = useState<string | null>(null);
   const choiceError = limitErrorValue === value
@@ -123,7 +124,7 @@ function MultiChoiceField({ id, label, value, options, onChange, disabled, maxLe
   };
 
   return (
-    <div className="form-field">
+    <div className={`form-field${fullWidth ? " form-field--full" : ""}`}>
       <span className="form-label" id={`${id}-label`}>{label}（可多选）</span>
       <div className="form-choice-list" id={id} role="group" aria-labelledby={`${id}-label`}>
         {options.map((option, index) => (
@@ -410,15 +411,7 @@ export function CopyrightFormEditor({ form, onChange, disabled }: Props) {
         </div>
         <div className="form-grid">
           {input("development_purpose", "开发目的", "text", undefined, COPYRIGHT_SHORT_TEXT_MAX)}
-          <MultiChoiceField
-            id="target_industry"
-            label="面向领域 / 行业"
-            value={form.target_industry}
-            options={TARGET_INDUSTRY_OPTIONS}
-            maxLength={COPYRIGHT_SHORT_TEXT_MAX}
-            onChange={(value) => set("target_industry", value)}
-            disabled={disabled}
-          />
+          {input("target_industry", "面向领域 / 行业", "text", "请填写软件实际面向的领域或行业", COPYRIGHT_SHORT_TEXT_MAX)}
           <div className="form-field form-field--full">
             <label className="form-label" htmlFor="main_functions">软件的主要功能</label>
             <Textarea id="main_functions" className="min-h-36" maxLength={COPYRIGHT_MAIN_FUNCTIONS_MAX} value={form.main_functions} onChange={(event) => set("main_functions", event.target.value)} disabled={disabled} placeholder="请完整描述软件解决的问题、主要模块、关键功能和用户操作流程。" />
@@ -426,13 +419,16 @@ export function CopyrightFormEditor({ form, onChange, disabled }: Props) {
               当前 {characterCount(form.main_functions)} / {COPYRIGHT_MAIN_FUNCTIONS_MIN}～{COPYRIGHT_MAIN_FUNCTIONS_MAX} 字符；草稿可暂存，生成材料前需达到范围
             </span>
           </div>
-          <div className="form-field form-field--full">
-            <label className="form-label" htmlFor="technical_features">软件技术特点</label>
-            <Textarea id="technical_features" className="min-h-24" maxLength={COPYRIGHT_TECHNICAL_FEATURES_MAX} value={form.technical_features} onChange={(event) => set("technical_features", event.target.value)} disabled={disabled} placeholder="例如：权限管理、数据处理、接口服务、部署方式等。" />
-            <span className={characterCount(form.technical_features) > COPYRIGHT_TECHNICAL_FEATURES_MAX ? "form-hint form-hint--error" : "form-hint"}>
-              当前 {characterCount(form.technical_features)} / {COPYRIGHT_TECHNICAL_FEATURES_MAX} 字符
-            </span>
-          </div>
+          <MultiChoiceField
+            id="technical_features"
+            label="软件技术特点"
+            value={form.technical_features}
+            options={TECHNICAL_FEATURE_OPTIONS}
+            maxLength={COPYRIGHT_TECHNICAL_FEATURES_MAX}
+            onChange={(value) => set("technical_features", value)}
+            disabled={disabled}
+            fullWidth
+          />
         </div>
       </section>
     </div>
