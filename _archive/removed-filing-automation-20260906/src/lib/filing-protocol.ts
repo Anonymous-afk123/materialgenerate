@@ -70,6 +70,10 @@ export const filingEventCodes = [
 ] as const;
 export type FilingEventCode = typeof filingEventCodes[number];
 
+// Diagnostics are deliberately limited to static field/step identifiers. Do
+// not put page text, personal data, file names or URLs in this property.
+export type FilingEventDetail = string;
+
 export type FilingMaterialManifest = {
   id: string;
   kind: MaterialKind;
@@ -97,9 +101,9 @@ export type AppToExtensionMessage =
 
 export type ExtensionToAppMessage =
   | { protocol: typeof FILING_PROTOCOL; source: typeof FILING_EXTENSION_SOURCE; type: "EXTENSION_READY"; version: string }
-  | { protocol: typeof FILING_PROTOCOL; source: typeof FILING_EXTENSION_SOURCE; type: "FILING_PROGRESS"; jobId: string; step: FilingStep; code: FilingEventCode; progress: number }
-  | { protocol: typeof FILING_PROTOCOL; source: typeof FILING_EXTENSION_SOURCE; type: "FILING_NEEDS_USER"; jobId: string; step: FilingStep; code: FilingEventCode }
-  | { protocol: typeof FILING_PROTOCOL; source: typeof FILING_EXTENSION_SOURCE; type: "FILING_FAILED"; jobId: string; step: FilingStep; code: FilingEventCode; retryable: boolean }
+  | { protocol: typeof FILING_PROTOCOL; source: typeof FILING_EXTENSION_SOURCE; type: "FILING_PROGRESS"; jobId: string; step: FilingStep; code: FilingEventCode; progress: number; detail?: FilingEventDetail }
+  | { protocol: typeof FILING_PROTOCOL; source: typeof FILING_EXTENSION_SOURCE; type: "FILING_NEEDS_USER"; jobId: string; step: FilingStep; code: FilingEventCode; detail?: FilingEventDetail }
+  | { protocol: typeof FILING_PROTOCOL; source: typeof FILING_EXTENSION_SOURCE; type: "FILING_FAILED"; jobId: string; step: FilingStep; code: FilingEventCode; retryable: boolean; detail?: FilingEventDetail }
   | { protocol: typeof FILING_PROTOCOL; source: typeof FILING_EXTENSION_SOURCE; type: "FILING_COMPLETED"; jobId: string; step: "completed" };
 
 export type BackgroundMessage =
@@ -127,6 +131,7 @@ export function isExtensionToAppMessage(value: unknown): value is ExtensionToApp
   if (value.type === "EXTENSION_READY") return typeof value.version === "string" && value.version.length <= 40;
   if (value.type === "FILING_COMPLETED") return typeof value.jobId === "string" && value.step === "completed";
   if (typeof value.jobId !== "string" || !filingSteps.includes(value.step as FilingStep) || !filingEventCodes.includes(value.code as FilingEventCode)) return false;
+  if (value.detail !== undefined && (typeof value.detail !== "string" || value.detail.length > 120 || !/^[a-z0-9_.:-]+$/i.test(value.detail))) return false;
   if (value.type === "FILING_PROGRESS") return Number.isInteger(value.progress) && Number(value.progress) >= 0 && Number(value.progress) <= 100;
   if (value.type === "FILING_NEEDS_USER") return true;
   return value.type === "FILING_FAILED" && typeof value.retryable === "boolean";

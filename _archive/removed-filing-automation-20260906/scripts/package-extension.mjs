@@ -6,7 +6,7 @@ import { zipSync } from "fflate";
 const projectRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const dist = resolve(projectRoot, "browser-extension/dist");
 const release = resolve(projectRoot, "browser-extension/release");
-const output = resolve(release, "softreg-filing-extension-v0.1.0.zip");
+const output = resolve(release, "softreg-filing-extension-v0.1.2.zip");
 
 function collect(directory, files = {}) {
   for (const name of readdirSync(directory)) {

@@ -5,6 +5,15 @@ export const providerModels = {
   deepseek: ["deepseek-v4-flash", "deepseek-v4-pro"],
 } as const;
 
+export const defaultProviderBaseUrls = {
+  openai: "https://api.openai.com/v1",
+  deepseek: "https://api.deepseek.com",
+} as const;
+
+export function providerForBaseUrl(value: string): Provider {
+  return /deepseek/i.test(value) ? "deepseek" : "openai";
+}
+
 /**
  * The optional apiKey is only used while migrating the old sessionStorage value.
  * A saved configuration always has an id and never stores the full key here.
@@ -13,6 +22,7 @@ export interface ByokConfig {
   id?: string;
   name?: string;
   provider: Provider;
+  baseUrl: string;
   model: string;
   keyLast4?: string;
   apiKey?: string;
@@ -22,6 +32,7 @@ export interface SavedLlmConfig {
   id: string;
   name: string;
   provider: Provider;
+  baseUrl: string;
   model: string;
   keyLast4: string;
   createdAt?: string;
@@ -38,11 +49,12 @@ function validProvider(value: unknown): value is Provider {
 function readMetadata(raw: string): ByokConfig | null {
   try {
     const parsed = JSON.parse(raw) as Partial<ByokConfig>;
-    if (!parsed.id || !validProvider(parsed.provider) || !parsed.model || !parsed.keyLast4) return null;
+    if (!parsed.id || !validProvider(parsed.provider) || !parsed.baseUrl || !parsed.model || !parsed.keyLast4) return null;
     return {
       id: parsed.id,
       name: parsed.name || "AI 配置",
       provider: parsed.provider,
+      baseUrl: parsed.baseUrl,
       model: parsed.model,
       keyLast4: parsed.keyLast4,
     };
@@ -62,7 +74,7 @@ export function loadByok(): ByokConfig | null {
     if (!legacy) return null;
     const parsed = JSON.parse(legacy) as Partial<ByokConfig>;
     if (!validProvider(parsed.provider) || !parsed.model || !parsed.apiKey) return null;
-    return { provider: parsed.provider, model: parsed.model, apiKey: parsed.apiKey };
+    return { provider: parsed.provider, baseUrl: "https://api.openai.com/v1", model: parsed.model, apiKey: parsed.apiKey };
   } catch {
     return null;
   }
@@ -79,6 +91,7 @@ export function saveByok(value: ByokConfig | null): void {
       id: value.id,
       name: value.name || "AI 配置",
       provider: value.provider,
+      baseUrl: value.baseUrl,
       model: value.model,
       keyLast4: value.keyLast4,
     }));

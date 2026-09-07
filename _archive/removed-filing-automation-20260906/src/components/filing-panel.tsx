@@ -142,9 +142,10 @@ export function FilingPanel({ applicationId, holderCount, developmentMethod, sof
       const incoming = event.data as ExtensionToAppMessage;
       if (incoming.type === "EXTENSION_READY") return;
       if (jobRef.current && incoming.jobId !== jobRef.current.id) return;
+      const detail = "detail" in incoming && typeof incoming.detail === "string" ? incoming.detail : undefined;
       const apiEvent = incoming.type === "FILING_COMPLETED"
         ? { type: incoming.type, step: "completed" as const, code: "completed" as const, progress: 100 }
-        : { type: incoming.type, step: incoming.step, code: incoming.code, ...(incoming.type === "FILING_PROGRESS" ? { progress: incoming.progress } : {}), ...(incoming.type === "FILING_FAILED" ? { retryable: incoming.retryable } : {}) };
+        : { type: incoming.type, step: incoming.step, code: incoming.code, ...(detail ? { detail } : {}), ...(incoming.type === "FILING_PROGRESS" ? { progress: incoming.progress } : {}), ...(incoming.type === "FILING_FAILED" ? { retryable: incoming.retryable } : {}) };
       void recordFilingEvent(incoming.jobId, apiEvent).then((next) => {
         if (!active) return;
         setJob(next);
@@ -324,7 +325,10 @@ export function FilingPanel({ applicationId, holderCount, developmentMethod, sof
             {active && <Button type="button" variant="outline" onClick={() => void cancel()} disabled={busy}><Square size={14} />取消任务</Button>}
           </div>
           {recentEvents.length > 0 && <div className="filing-events" aria-label="最近填报事件">
-            {recentEvents.map((event) => <div className="filing-event" key={event.id}><CheckCircle2 size={13} /><span>{eventLabels[event.code] || "填报状态已更新"}</span><time>{new Date(event.created_at).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time></div>)}
+            {recentEvents.map((event) => {
+              const detail = typeof event.metadata?.detail === "string" ? event.metadata.detail : "";
+              return <div className="filing-event" key={event.id}><CheckCircle2 size={13} /><span>{eventLabels[event.code] || "填报状态已更新"}{detail ? ` · ${detail}` : ""}</span><time>{new Date(event.created_at).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time></div>;
+            })}
           </div>}
           {!job && <div className="filing-panel__help"><CircleHelp size={15} /><span>第一次使用请先确认前置材料和官网填报资料都已就绪；签章页不阻塞第一次填写申请表。</span></div>}
           {job?.status === "completed" && <div className="filing-panel__help"><PauseCircle size={15} /><span>自动化终点是“填写并上传后暂停”。请在官方页面自行复核、生成/处理签章页并完成最终提交。</span></div>}

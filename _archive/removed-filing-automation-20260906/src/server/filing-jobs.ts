@@ -13,6 +13,7 @@ import {
   filingJobEventSchema,
 } from "./api-contracts.ts";
 import { recordToFormData, validateCopyrightForm, type CopyrightFormData } from "@/lib/copyright-form";
+import { isOfficialSoftwareCategory } from "@/lib/copyright-options";
 import {
   filingEventCodes,
   R11_URL,
@@ -185,6 +186,9 @@ function validateFilingForm(form: CopyrightFormData): string[] {
   ];
   for (const [field, label] of required) {
     if (!nonEmpty(form[field])) errors.push(`请填写${label}`);
+  }
+  if (nonEmpty(form.software_category) && !isOfficialSoftwareCategory(form.software_category)) {
+    errors.push("软件分类必须选择：应用软件、嵌入式软件、中间件或操作系统");
   }
   if (!Number.isInteger(form.source_code_lines) || form.source_code_lines <= 0) errors.push("请填写源代码行数");
   if (form.work_type === "modified") {
@@ -390,7 +394,7 @@ function nextState(event: z.infer<typeof filingJobEventSchema>): { status?: Fili
   if (event.type === "FILING_FAILED") return {
     status: "failed",
     step: event.step,
-    errorMessage: filingErrorMessage(event.code),
+    errorMessage: filingErrorMessage(event.code, event.detail),
   };
   if (event.type === "FILING_NEEDS_USER") {
     if (event.code === "login_required") return { status: "waiting_login", step: "login" };
@@ -406,7 +410,7 @@ function nextState(event: z.infer<typeof filingJobEventSchema>): { status?: Fili
   return { step: event.step };
 }
 
-function filingErrorMessage(code: FilingEventCode): string {
+function filingErrorMessage(code: FilingEventCode, detail?: string): string {
   const messages: Partial<Record<FilingEventCode, string>> = {
     unsupported_development_method: "当前扩展版本暂不支持该开发方式。",
     field_not_found: "官方页面缺少可确认的目标字段，已安全暂停。",
@@ -418,7 +422,8 @@ function filingErrorMessage(code: FilingEventCode): string {
     review_required: "请在官方页面复核申请信息后继续填报。",
     extension_disconnected: "填报连接已中断，可以重新配对并继续。",
   };
-  return messages[code] || "自动填报未完成，请检查官方页面后重试。";
+  const message = messages[code] || "自动填报未完成，请检查官方页面后重试。";
+  return detail ? `${message}（停止位置：${detail}）` : message;
 }
 
 function assertFilingEventShape(event: z.infer<typeof filingJobEventSchema>): void {
@@ -451,7 +456,11 @@ export async function recordFilingEvent(input: {
     code: input.event.code,
     progress: input.event.progress ?? null,
     extension_version: input.event.extensionVersion || job.extension_version,
-    metadata: { source: "extension", event_type: input.event.type },
+    metadata: {
+      source: "extension",
+      event_type: input.event.type,
+      ...(input.event.detail ? { detail: input.event.detail } : {}),
+    },
   });
   if (eventResult.error) throw new Error("filing event creation failed");
   const patch: Record<string, unknown> = {
@@ -471,7 +480,7 @@ export async function recordFilingEvent(input: {
   }
   if (input.event.type === "FILING_NEEDS_USER") {
     patch.error_code = input.event.code;
-    patch.error_message = filingErrorMessage(input.event.code);
+    patch.error_message = filingErrorMessage(input.event.code, input.event.detail);
   }
   if (transition.completed) {
     patch.error_code = null;

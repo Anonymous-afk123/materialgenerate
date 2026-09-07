@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { applicationIdSchema, filingProfileInputSchema, generateRequestSchema, llmConfigIdSchema, sourceArchiveReviewSchema, sourceFeedbackRequestSchema } from "../src/server/api-contracts.ts";
+import { applicationIdSchema, generateRequestSchema, llmConfigIdSchema, sourceArchiveReviewSchema, sourceFeedbackRequestSchema } from "../src/server/api-contracts.ts";
 import { buildOpenApiDocument } from "../src/server/openapi.ts";
 
 function containsWriteOnlyApiKey(value: unknown): boolean {
@@ -28,19 +28,10 @@ test("OpenAPI document describes the softreg contract", () => {
   assert.deepEqual(document.paths["/api/health"]?.get && (document.paths["/api/health"].get as Record<string, unknown>).security, []);
   assert.ok(document.paths["/api/generate"]?.post);
   assert.ok(document.paths["/api/source-feedback"]?.post);
-  assert.ok(document.paths["/api/applications/{id}/materials/upload-url"]?.post);
   assert.ok(document.paths["/api/applications/{id}/source-archive"]?.get);
   assert.ok(document.paths["/api/applications/{id}/source-archive/upload-url"]?.post);
   assert.ok(document.paths["/api/applications/{id}/source-archive/complete"]?.post);
   assert.ok(document.paths["/api/llm-configs/{id}/test"]?.post);
-  assert.ok(document.paths["/api/applications/{id}/filing-jobs"]?.post);
-  assert.ok(document.paths["/api/filing-jobs"]?.get);
-  assert.ok(document.paths["/api/filing-jobs/{id}/events"]?.post);
-  assert.ok(document.paths["/api/filing-jobs/{id}/resume"]?.post);
-  assert.ok(document.paths["/api/filing-jobs/{id}/cancel"]?.post);
-  assert.ok((document.components?.schemas as Record<string, unknown> | undefined)?.FilingProfile);
-  const filingManifest = (document.components?.schemas as Record<string, unknown> | undefined)?.FilingManifest as Record<string, unknown> | undefined;
-  assert.ok(filingManifest && (filingManifest.properties as Record<string, unknown>)?.filingProfile);
 
   const generationPost = document.paths["/api/generate"].post as Record<string, unknown>;
   const generationResponses = generationPost.responses as Record<string, unknown>;
@@ -64,7 +55,6 @@ test("generation and source feedback use only persisted application inputs", () 
   assert.equal(generateRequestSchema.safeParse({ applicationId, llmConfigId, sourceMode: "saved" }).success, false);
   assert.equal(sourceFeedbackRequestSchema.safeParse({ applicationId, llmConfigId }).success, true);
   assert.equal(sourceFeedbackRequestSchema.safeParse({ applicationId, llmConfigId, sourceObjectKey: "incoming/not-accepted.zip" }).success, false);
-  assert.equal(filingProfileInputSchema.safeParse({ contact_name: "暂存联系人" }).success, true);
 });
 
 test("source review accepts Supabase ISO timestamps with explicit offsets", () => {

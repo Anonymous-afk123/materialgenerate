@@ -17,11 +17,9 @@ const technicalFeaturesText = z.string().trim().max(COPYRIGHT_TECHNICAL_FEATURES
 const mainFunctionsText = z.string().trim().max(COPYRIGHT_MAIN_FUNCTIONS_MAX);
 
 export const applicationIdSchema = z.string().uuid();
-export const materialIdSchema = z.string().uuid();
 export const generationJobIdSchema = z.string().uuid();
 export const generationRecordIdSchema = z.string().uuid();
 export const llmConfigIdSchema = z.string().uuid();
-export const filingJobIdSchema = z.string().uuid();
 
 const copyrightHolderCommonFields = {
   id: z.string().uuid().optional(),
@@ -163,16 +161,6 @@ export const sourceArchiveReviewSchema = z.object({
   description: "确认或跳过当前源码核对，并使用申请和源码版本做并发校验。",
 });
 
-export const filingProfileInputSchema = z.object({
-  applicant_address: longText.optional(),
-  postal_code: shortText.optional(),
-  contact_name: shortText.optional(),
-  contact_phone: shortText.optional(),
-}).strict().meta({
-  id: "FilingProfileInput",
-  description: "用户级官网填报默认资料。允许暂存不完整内容，启动填报前必须补齐四项。",
-});
-
 export const sourceFeedbackSuggestionResponseSchema = z.object({
   field: sourceFeedbackFieldSchema,
   label: z.string(),
@@ -236,84 +224,9 @@ export const llmConfigWriteSchema = llmConfigInputSchema.extend({
   description: "保存或更新模型配置。apiKey 只接收写入，不在响应中返回。",
 });
 
-export const materialKindSchema = z.enum([
-  "source_code_docx",
-  "source_code_pdf",
-  "user_manual_docx",
-  "user_manual_pdf",
-  "application_summary_pdf",
-  "cooperation_agreement",
-  "signature_page",
-  "holder_identity_proof",
-  "commission_agreement",
-  "task_order",
-]);
-
-export const materialUploadSchema = z.object({
-  kind: materialKindSchema,
-  fileName: z.string().trim().min(1).max(200),
-  contentType: z.string().trim().max(120).optional(),
-  size: z.number().int().positive().max(30 * 1024 * 1024),
-  holderId: z.string().uuid().optional(),
-}).meta({
-  id: "MaterialUploadRequest",
-  description: "申请材料的 signed upload 授权请求。",
-});
-
-export const materialCompleteSchema = z.object({
-  materialId: materialIdSchema,
-  size: z.number().int().positive().max(30 * 1024 * 1024).optional(),
-  checksum: z.string().trim().max(200).optional(),
-}).meta({
-  id: "MaterialCompleteRequest",
-  description: "确认材料已通过 Supabase signed upload 上传。",
-});
-
-export const filingJobCreateSchema = z.object({
-  mode: z.literal("fill_and_upload").default("fill_and_upload"),
-  browser: z.literal("chrome").default("chrome"),
-  extensionVersion: z.string().trim().max(40).optional(),
-}).strict().meta({
-  id: "FilingJobCreateRequest",
-  description: "创建 Chrome 扩展辅助填报任务。登录、验证码、签章和最终提交由用户完成。",
-});
-
-export const filingJobEventSchema = z.object({
-  type: z.enum(["EXTENSION_READY", "FILING_PROGRESS", "FILING_NEEDS_USER", "FILING_FAILED", "FILING_COMPLETED"]),
-  step: z.enum([
-    "pairing", "opening_portal", "login", "r11_entry", "application_form",
-    "review", "materials", "signature_page", "waiting_user", "completed",
-  ]),
-  code: z.enum([
-    "extension_ready", "portal_opened", "login_required", "login_detected",
-    "form_started", "form_filled", "review_required", "materials_ready",
-    "upload_started", "upload_completed", "signature_page_required",
-    "manual_upload_required", "unsupported_development_method", "field_not_found",
-    "field_ambiguous", "field_verification_failed", "portal_structure_changed",
-    "extension_disconnected", "cancelled_by_user", "completed", "unknown_error",
-  ]),
-  progress: z.number().int().min(0).max(100).optional(),
-  extensionVersion: z.string().trim().max(40).optional(),
-  retryable: z.boolean().optional(),
-}).strict().meta({
-  id: "FilingJobEventRequest",
-  description: "Chrome 扩展上报的脱敏填报事件，不接受页面原文、用户证件或文件内容。",
-});
-
-export const filingJobResumeSchema = z.object({}).strict().meta({
-  id: "FilingJobResumeRequest",
-  description: "恢复填报并重新生成短期材料下载地址。",
-});
-
-export const filingJobCancelSchema = z.object({}).strict().meta({
-  id: "FilingJobCancelRequest",
-  description: "取消当前填报任务。",
-});
-
 export const downloadKindSchema = z.enum([
   "source_code",
   "source_code_pdf",
   "user_manual",
   "user_manual_pdf",
-  "collection_form",
 ]);

@@ -47,7 +47,7 @@ export async function POST(request: NextRequest) {
       "请补全软件著作权登记信息中的技术字段。",
       "只输出 Markdown 表格，不要解释。表格字段名必须使用输入中的中文字段名；不要输出表格之外的正文。",
       mainInstruction,
-      "软件技术特点不超过 100 字符；开发/运行环境、开发目的、面向领域行业、软件分类和编程语言均不超过 50 字符。无法从上下文确认的字段保持空白。",
+      "软件分类只能填写“应用软件、嵌入式软件、中间件、操作系统”中的一项；软件技术特点不超过 100 字符；开发/运行环境、开发目的、面向领域行业、软件分类和编程语言均不超过 50 字符。无法从上下文确认的字段保持空白。",
       "申请人、著作权人、证件、权利说明、申请办理方式、地址、联系人、联系方式、日期和源码行数不由本接口自动填写。",
       "软件的主要功能请放在同一个表格单元格中，尽量不要换行，不要使用竖线字符 |；必须是自然、具体、可核验的功能描述。",
       formToAiMarkdown(effective),
@@ -60,6 +60,7 @@ export async function POST(request: NextRequest) {
         : "";
       const content = await callLlm({
         provider: llmConfig.provider,
+        baseUrl: llmConfig.baseUrl,
         model: llmConfig.model,
         apiKey: llmConfig.apiKey,
         messages: [

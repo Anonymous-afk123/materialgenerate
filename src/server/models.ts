@@ -16,6 +16,7 @@ export type ProviderMessage = {
 
 export interface ProviderRequestInput {
   provider: Provider;
+  baseUrl?: string;
   model: string;
   messages: ProviderMessage[];
   stream?: boolean;
@@ -30,8 +31,16 @@ const providerEndpoints: Record<Provider, string> = {
   deepseek: "https://api.deepseek.com/chat/completions",
 };
 
+export const defaultProviderBaseUrls: Record<Provider, string> = {
+  openai: "https://api.openai.com/v1",
+  deepseek: "https://api.deepseek.com",
+};
+
 export const providerSchema = z.enum(["openai", "deepseek"]);
 export const modelSchema = z.string().trim().min(1).max(100);
+export const baseUrlSchema = z.string().trim().min(1).max(500).url().refine((value) => /^https?:\/\//i.test(value), {
+  message: "Base URL 必须以 http:// 或 https:// 开头",
+});
 export const apiKeySchema = z.string().trim().min(10).max(500).meta({
   writeOnly: true,
   description: "供应商 API Key，仅用于保存或测试，不会在响应中返回。",
@@ -39,12 +48,9 @@ export const apiKeySchema = z.string().trim().min(10).max(500).meta({
 
 export const byokSchema = z.object({
   provider: providerSchema,
+  baseUrl: baseUrlSchema,
   model: modelSchema,
   apiKey: apiKeySchema,
-}).superRefine((value, context) => {
-  if (!isAllowedModel(value.provider, value.model)) {
-    context.addIssue({ code: "custom", path: ["model"], message: "不支持的模型" });
-  }
 });
 
 export type ByokInput = z.infer<typeof byokSchema>;
@@ -52,23 +58,21 @@ export type ByokInput = z.infer<typeof byokSchema>;
 export const llmConfigInputSchema = z.object({
   name: z.string().trim().min(1).max(100).optional(),
   provider: providerSchema,
+  baseUrl: baseUrlSchema,
   model: modelSchema,
   apiKey: apiKeySchema,
-}).superRefine((value, context) => {
-  if (!isAllowedModel(value.provider, value.model)) {
-    context.addIssue({ code: "custom", path: ["model"], message: "不支持的模型" });
-  }
 });
 
 export type LlmConfigInput = z.infer<typeof llmConfigInputSchema>;
 
 export function isAllowedModel(provider: string, model: string): boolean {
-  if (!(provider in providerModels)) return false;
-  return (providerModels[provider as Provider] as readonly string[]).includes(model);
+  return provider === "openai" || provider === "deepseek"
+    ? model.trim().length > 0 && model.trim().length <= 100
+    : false;
 }
 
 export function buildProviderRequest(input: ProviderRequestInput) {
-  if (!isAllowedModel(input.provider, input.model)) throw new Error("不支持的模型");
+  if (!isAllowedModel(input.provider, input.model)) throw new Error("模型配置无效");
   const messages = input.provider === "openai"
     ? input.messages.map((message) => ({
       ...message,
@@ -91,5 +95,8 @@ export function buildProviderRequest(input: ProviderRequestInput) {
       max_tokens: input.maxTokens,
       ...(input.thinking ? { thinking: { type: input.thinking } } : {}),
     };
-  return { url: providerEndpoints[input.provider], body };
+  const configuredBaseUrl = input.baseUrl?.trim().replace(/\/+$/, "");
+  const baseUrl = configuredBaseUrl || defaultProviderBaseUrls[input.provider];
+  const url = baseUrl.endsWith("/chat/completions") ? baseUrl : `${baseUrl}/chat/completions`;
+  return { url: url || providerEndpoints[input.provider], body };
 }

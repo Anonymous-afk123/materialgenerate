@@ -19,6 +19,7 @@ interface GenerationEvent {
 export interface GenerationInput {
   application: ApplicationRow;
   provider: Provider;
+  baseUrl: string;
   model: string;
   apiKey: string;
   sourceBuffer?: Buffer;
@@ -112,7 +113,7 @@ export async function generateMaterials(input: GenerationInput): Promise<Generat
   }
 
   const collectionMarkdown = formToMarkdown(application);
-  emit({ step: "analyze", message: "使用当前已保存的申请信息生成采集表…" });
+  emit({ step: "analyze", message: "正在整理当前已保存的申请信息…" });
 
   let sourceMarkdown: string;
   if (sourceInfo) {
@@ -127,6 +128,7 @@ export async function generateMaterials(input: GenerationInput): Promise<Generat
       let content = "";
       await streamLlm({
         provider: input.provider,
+        baseUrl: input.baseUrl,
         model: input.model,
         apiKey: input.apiKey,
         messages: [
@@ -161,6 +163,7 @@ export async function generateMaterials(input: GenerationInput): Promise<Generat
     let content = "";
     await streamLlm({
       provider: input.provider,
+      baseUrl: input.baseUrl,
       model: input.model,
       apiKey: input.apiKey,
       messages: [

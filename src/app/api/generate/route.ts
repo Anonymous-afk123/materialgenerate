@@ -8,7 +8,6 @@ import { assertObjectSize, deleteObjects, downloadBuffer, signedDownloadUrl, upl
 import { generateMaterials } from "@/server/generation-pipeline";
 import { errorResponse, fail, isAbortError, requireUser } from "@/server/http";
 import { getSupabaseAdmin } from "@/server/config";
-import { recordGeneratedMaterials } from "@/server/materials";
 import { generateRequestSchema } from "@/server/api-contracts";
 import { validateCopyrightTextFields } from "@/lib/copyright-constraints";
 import { getLlmFailureInfo } from "@/server/llm";
@@ -51,7 +50,7 @@ function stageLabel(stage: string): string {
   return {
     queued: "排队",
     init: "初始化",
-    analyze: "采集表分析",
+    analyze: "申请信息整理",
     source_code: "源代码处理",
     manual: "用户手册生成",
     convert: "文档转换",
@@ -64,7 +63,7 @@ function stageLabel(stage: string): string {
 function operationLabel(operation?: string): string | undefined {
   if (!operation) return undefined;
   const [group, name] = operation.split("/");
-  const groupLabel = group === "manual" ? "用户手册" : group === "source-code" ? "源代码" : group === "analyze" ? "采集表" : group;
+  const groupLabel = group === "manual" ? "用户手册" : group === "source-code" ? "源代码" : group === "analyze" ? "申请信息整理" : group;
   const nameLabels: Record<string, string> = {
     overview: "软件概况",
     functions: "软件功能",
@@ -188,6 +187,7 @@ export async function POST(request: NextRequest) {
           const generated = await generateMaterials({
             application,
             provider: llmConfig.provider,
+            baseUrl: llmConfig.baseUrl,
             model: llmConfig.model,
             apiKey: llmConfig.apiKey,
             sourceBuffer,
@@ -200,7 +200,7 @@ export async function POST(request: NextRequest) {
             },
           });
 
-          emit("upload", "正在上传 DOCX、PDF 和采集表…");
+          emit("upload", "正在上传 DOCX 和 PDF…");
           const prefix = `generations/${user.id}/${application.id}/${Date.now()}-${randomUUID()}`;
           const softwareName = safeName(generated.softwareName);
           const {
@@ -208,14 +208,12 @@ export async function POST(request: NextRequest) {
             sourcePdfObjectKey,
             manualObjectKey,
             manualPdfObjectKey,
-            collectionObjectKey,
           } = generationObjectKeys(prefix);
           uploadedKeys.push(
             sourceObjectKey,
             sourcePdfObjectKey,
             manualObjectKey,
             manualPdfObjectKey,
-            collectionObjectKey,
           );
           stage = "storage-upload";
           await Promise.all([
@@ -223,15 +221,13 @@ export async function POST(request: NextRequest) {
             uploadBuffer(sourcePdfObjectKey, generated.sourcePdf, "application/pdf"),
             uploadBuffer(manualObjectKey, generated.manualDocx, "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
             uploadBuffer(manualPdfObjectKey, generated.manualPdf, "application/pdf"),
-            uploadBuffer(collectionObjectKey, Buffer.from(generated.collectionMarkdown, "utf8"), "text/markdown; charset=utf-8"),
           ]);
 
-          const [sourceCodeDocx, sourceCodePdf, userManualDocx, userManualPdf, collectionFormMarkdown] = await Promise.all([
+          const [sourceCodeDocx, sourceCodePdf, userManualDocx, userManualPdf] = await Promise.all([
             signedDownloadUrl(sourceObjectKey),
             signedDownloadUrl(sourcePdfObjectKey),
             signedDownloadUrl(manualObjectKey),
             signedDownloadUrl(manualPdfObjectKey),
-            signedDownloadUrl(collectionObjectKey),
           ]);
           const record = await getSupabaseAdmin().from("generation_records").insert({
             user_id: user.id,
@@ -242,7 +238,6 @@ export async function POST(request: NextRequest) {
             source_code_pdf_object_key: sourcePdfObjectKey,
             user_manual_object_key: manualObjectKey,
             user_manual_pdf_object_key: manualPdfObjectKey,
-            collection_form_object_key: collectionObjectKey,
             job_id: jobId,
             provider: llmConfig.provider,
             model: llmConfig.model,
@@ -251,18 +246,6 @@ export async function POST(request: NextRequest) {
           if (record.error || !record.data) throw new Error("generation record creation failed");
           const createdGenerationRecordId = record.data.id;
           generationRecordId = createdGenerationRecordId;
-          await recordGeneratedMaterials({
-            applicationId: application.id,
-            userId: user.id,
-            generationRecordId: createdGenerationRecordId,
-            developmentMethod: String(application.development_method || "independent"),
-            files: [
-              { kind: "source_code_docx", fileName: `${softwareName}-source-code.docx`, objectKey: sourceObjectKey, mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", sizeBytes: generated.sourceDocx.length },
-              { kind: "source_code_pdf", fileName: `${softwareName}-source-code.pdf`, objectKey: sourcePdfObjectKey, mimeType: "application/pdf", sizeBytes: generated.sourcePdf.length },
-              { kind: "user_manual_docx", fileName: `${softwareName}-user-manual.docx`, objectKey: manualObjectKey, mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", sizeBytes: generated.manualDocx.length },
-              { kind: "user_manual_pdf", fileName: `${softwareName}-user-manual.pdf`, objectKey: manualPdfObjectKey, mimeType: "application/pdf", sizeBytes: generated.manualPdf.length },
-            ],
-          });
           const applicationUpdate = await getSupabaseAdmin().from("applications").update({
             status: "completed",
           }).eq("id", application.id).eq("user_id", user.id);
@@ -279,7 +262,6 @@ export async function POST(request: NextRequest) {
             sourceCodePdf,
             userManualDocx,
             userManualPdf,
-            collectionFormMarkdown,
             fileName: softwareName,
             recordId: createdGenerationRecordId,
             pdfWarnings: generated.pdfWarnings,

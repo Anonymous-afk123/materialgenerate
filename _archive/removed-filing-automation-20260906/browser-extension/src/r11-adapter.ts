@@ -1,6 +1,7 @@
 import type { CopyrightFormData, CopyrightHolder } from "../../src/lib/copyright-form.ts";
 import type { FilingProfile } from "../../src/lib/filing-profile.ts";
 import type { MaterialKind } from "../../src/lib/materials.ts";
+import { isOfficialSoftwareCategory } from "../../src/lib/copyright-options.ts";
 
 export type AdapterErrorCode =
   | "unsupported_development_method"
@@ -693,15 +694,30 @@ async function setDatePickerValue(element: HTMLElement, value: string): Promise<
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const calendar = visibleCalendar(wrapper);
     if (!calendar) throw new AdapterError("field_verification_failed", "日期日历未打开");
-    const cells = Array.from(calendar.querySelectorAll("td,[role='gridcell']"))
+    const cells = Array.from(calendar.querySelectorAll(".datepicker-body tbody td,tbody td,[role='gridcell']"))
       .filter((cell) => isVisible(cell) && !dateCellIsDisabled(cell))
       .filter((cell) => /^0?\d{1,2}$/.test((cell.textContent || "").trim()));
     const matches = cells.filter((cell) => Number((cell.textContent || "").trim()) === target.day);
     const visibleMonth = calendarMonth(wrapper);
-    if (visibleMonth && visibleMonth.year === target.year && visibleMonth.month === target.month && matches.length === 1) {
-      (matches[0] as HTMLElement).click();
+    if (visibleMonth && visibleMonth.year === target.year && visibleMonth.month === target.month) {
+      // The real R11 picker renders previous/next-month days in the same
+      // tbody without an `other-month` class. Compute the 6x7 grid position
+      // from the already confirmed year/month so a duplicate day number from
+      // an adjacent month can never be selected accidentally.
+      const allCells = Array.from(calendar.querySelectorAll(".datepicker-body tbody td,tbody td,[role='gridcell']"))
+        .filter(isVisible);
+      const firstWeekday = new Date(target.year, target.month - 1, 1).getDay() || 7;
+      const targetIndex = firstWeekday - 1 + target.day - 1;
+      const positional = allCells[targetIndex] as HTMLElement | undefined;
+      const targetCell = positional && !dateCellIsDisabled(positional)
+        && Number((positional.textContent || "").trim()) === target.day
+        ? positional
+        : matches.length === 1 ? matches[0] as HTMLElement : undefined;
+      if (targetCell) {
+        targetCell.click();
       if (input) await waitForDateInputValue(input, value);
       return;
+      }
     }
     const targetMonthIndex = target.year * 12 + target.month;
     const currentMonthIndex = visibleMonth ? visibleMonth.year * 12 + visibleMonth.month : targetMonthIndex;
@@ -785,6 +801,35 @@ function optionMatches(element: Element, wanted: readonly string[]): boolean {
   });
 }
 
+function choiceTextMatches(actual: string, expected: string): boolean {
+  const left = normalizedValue(actual);
+  const right = normalizedValue(expected);
+  if (!left || !right) return false;
+  if (left === right) return true;
+  // The application commonly stores 江苏省/常州市 while the R11 area API
+  // displays 江苏/常州. Only remove administrative suffixes for a fallback;
+  // exact labels still win first and ambiguous matches are still rejected.
+  const stripAdministrativeSuffix = (value: string) => value.replace(/(特别行政区|自治区|自治州|地区|省|市)$/, "");
+  return stripAdministrativeSuffix(left) === stripAdministrativeSuffix(right);
+}
+
+function clickCustomOption(option: HTMLElement): void {
+  // The portal's hd-option is a Vue component whose listener is attached to
+  // the rendered div. Click that concrete option exactly once after bringing
+  // it into the scroll viewport. Do not click the select box again: that box
+  // is a toggle and a second click closes the menu. HTMLElement.click() is
+  // intentional here; it follows the same DOM path as a user's click and is
+  // more reliable with the portal's Vue 2 event bridge than writing the box
+  // label or dispatching a synthetic event only from the extension world.
+  try {
+    option.scrollIntoView({ block: "nearest", inline: "nearest" });
+  } catch {
+    // Some older Chromium/WebView implementations do not accept the options
+    // object. The element is still clickable without scrolling.
+  }
+  option.click();
+}
+
 function customSelectDropdown(control: HTMLElement): HTMLElement | null {
   return control.querySelector(".dropdown,.select-dropdown,.hd-select-dropdown") as HTMLElement | null;
 }
@@ -817,9 +862,23 @@ function controlValueMatches(element: HTMLElement, value: string, labels: readon
 
 function selectedControlValueMatches(element: HTMLElement, value: string, labels: readonly string[]): boolean {
   const wanted = [value, ...labels];
-  return Array.from(element.querySelectorAll(".hd-option,[role='option'],option"))
+  const selected = Array.from(element.querySelectorAll(".hd-option,[role='option'],option"))
     .filter((option) => option.matches(".selected,[aria-selected='true']:not([aria-selected='false']),:checked"))
     .some((option) => optionMatches(option, wanted));
+  if (selected) return true;
+
+  // R11 derives the visible `.box` label from its Vue model. Once the menu
+  // has closed, that label is also the reliable signal that a manual click
+  // (or a click handled by Vue before the option class is repainted) already
+  // selected the requested value. Never use this while the menu is open:
+  // stale text from a previous attempt must not be treated as a selection.
+  const dropdown = customSelectDropdown(element);
+  if (dropdown && isVisible(dropdown)) return false;
+  const current = normalizedValue(readControlValue(element));
+  return wanted.some((item) => {
+    const target = normalizedValue(item);
+    return Boolean(target) && (current === target || current.includes(target));
+  });
 }
 
 async function chooseCustomSelect(control: HTMLElement, root: ParentNode, value: string, labels: readonly string[]): Promise<void> {
@@ -842,7 +901,7 @@ async function chooseCustomSelect(control: HTMLElement, root: ParentNode, value:
   if (!menuWasAlreadyOpen) box.click();
   const openDeadline = Date.now() + 2_500;
   while (Date.now() < openDeadline && !isVisible(dropdown)) await waitForDomUpdate(1);
-  if (!isVisible(dropdown)) throw new AdapterError("field_verification_failed", `下拉菜单未打开：${value}`);
+  if (!isVisible(dropdown)) throw new AdapterError("portal_structure_changed", `下拉菜单未打开：${value}`);
 
   // R11 loads country, identity and software-classification options after the
   // component is mounted. Keep polling this control's own visible menu; do
@@ -850,26 +909,38 @@ async function chooseCustomSelect(control: HTMLElement, root: ParentNode, value:
   const optionsDeadline = Date.now() + 8_000;
   while (Date.now() < optionsDeadline) {
     if (selectedControlValueMatches(control, value, labels)) return;
-    if (!isVisible(dropdown)) throw new AdapterError("field_verification_failed", `下拉菜单在选择前关闭：${value}`);
+    if (!isVisible(dropdown)) throw new AdapterError("portal_structure_changed", `下拉菜单在选择前关闭：${value}`);
     const optionCandidates = uniqueElements(Array.from(dropdown.querySelectorAll(".hd-option,[role='option'],.option,li")).filter(isVisible));
-    const exactValue = optionCandidates.filter((option) => (option.getAttribute("value") || option.getAttribute("data-value") || "") === value);
+    const exactValue = optionCandidates.filter((option) => {
+      const optionValue = option.getAttribute("value") || option.getAttribute("data-value") || "";
+      return normalizeVisibleText(optionValue) === normalizeVisibleText(value);
+    });
     const exact = exactValue.length
       ? exactValue
       : optionCandidates.filter((option) => [value, ...labels].some((item) => choiceText(option) === normalizeVisibleText(item)));
     const matches = exact.length ? exact : optionCandidates.filter((option) => optionMatches(option, wanted));
     if (matches.length > 1) throw new AdapterError("field_ambiguous", `下拉选项无法唯一确认：${value}`);
     if (matches.length === 1) {
-      (matches[0] as HTMLElement).click();
+      // One concrete option click is deliberate. The outer `.box` is a
+      // toggle; clicking it again while Vue is repainting reopens the menu
+      // and was the source of the previous “一直展开但不选中” loop.
+      clickCustomOption(matches[0] as HTMLElement);
       const selectedDeadline = Date.now() + 2_500;
       while (Date.now() < selectedDeadline) {
         if (selectedControlValueMatches(control, value, labels)) return;
         await waitForDomUpdate(1);
       }
-      throw new AdapterError("field_verification_failed", `下拉选项点击后未确认：${value}`);
+      // Do not let the page-level refill call the toggle again. If Vue did
+      // not expose a selected option after one exact click, stop and let the
+      // user inspect or manually choose the field.
+      throw new AdapterError("portal_structure_changed", `下拉选项点击后未确认：${value}`);
     }
     await waitForDomUpdate(2);
   }
-  throw new AdapterError("field_not_found", `下拉选项无法确认：${value}`);
+  // The menu was opened once and its own option list was inspected for the
+  // full bounded window. Retrying the whole page here would toggle the same
+  // menu open/closed repeatedly, which is unsafe for the Vue select.
+  throw new AdapterError("portal_structure_changed", `下拉选项无法确认：${value}`);
 }
 
 async function chooseCascader(control: HTMLElement, root: ParentNode, values: readonly string[]): Promise<void> {
@@ -882,7 +953,10 @@ async function chooseCascader(control: HTMLElement, root: ParentNode, values: re
     return;
   }
   const label = (cascader.querySelector(".label,[role='combobox'],.box") || cascader) as HTMLElement;
-  label.click();
+  const existingDropdown = cascader.querySelector(".dropdown") as HTMLElement | null;
+  // A retry can run while the official cascader is still open. Its label is a
+  // toggle, so only open it when its own menu is not already visible.
+  if (!existingDropdown || !isVisible(existingDropdown)) label.click();
   await waitForDomUpdate(2);
   for (const value of values) {
     let selected = false;
@@ -893,7 +967,7 @@ async function chooseCascader(control: HTMLElement, root: ParentNode, values: re
       const options = localOptions.length
         ? localOptions
         : uniqueElements(Array.from(root.querySelectorAll(".hd-cascader .dropdown li,.hd-cascader [role='option'],.cascader .dropdown li,.cascader [role='option']")).filter(isVisible));
-      const matches = options.filter((option) => choiceText(option) === normalizeVisibleText(value));
+      const matches = options.filter((option) => choiceTextMatches(choiceText(option), value));
       if (matches.length > 1) throw new AdapterError("field_ambiguous", `级联选项无法唯一确认：${value}`);
       if (matches.length === 1) {
         (matches[0] as HTMLElement).click();
@@ -1009,6 +1083,85 @@ function holderRows(root: ParentNode): HTMLElement[] {
   return rows;
 }
 
+type HolderTextControl = HTMLInputElement | HTMLTextAreaElement;
+
+interface OfficialHolderControls {
+  nationality: HTMLElement;
+  area: HTMLElement | null;
+  holderType: HTMLElement;
+  name: HolderTextControl;
+  documentType: HTMLElement;
+  documentNumber: HolderTextControl;
+}
+
+function visibleHolderTextControls(row: HTMLElement): HolderTextControl[] {
+  return Array.from(row.querySelectorAll(
+    "input:not([type='hidden']):not([type='file']):not([type='radio']):not([type='checkbox']),textarea",
+  )).filter(isVisible) as HolderTextControl[];
+}
+
+function holderInputWithAliases(inputs: HolderTextControl[], aliases: readonly string[]): HolderTextControl | null {
+  const scored = inputs
+    .map((element) => ({ element, score: scoreText(element, aliases) }))
+    .filter((item) => item.score > 0);
+  if (!scored.length) return null;
+  const max = Math.max(...scored.map((item) => item.score));
+  const winners = scored.filter((item) => item.score === max);
+  return winners.length === 1 ? winners[0].element : null;
+}
+
+/**
+ * The real R11 owner editor does not render text labels next to its controls.
+ * It renders four `.formGroup-item-body-left-item` blocks in this order:
+ * country, area, people type/name, and document type/document number.  The
+ * semantic resolver is intentionally kept as a fallback for older builds and
+ * test pages, but using it first on R11 makes all three hd-selects look
+ * unlabeled and causes the second page to wait until it appears frozen.
+ */
+function officialHolderControls(row: HTMLElement): OfficialHolderControls | null {
+  const blocks = Array.from(row.querySelectorAll(".formGroup-item-body-left-item"))
+    .filter(isVisible) as HTMLElement[];
+  // Do not apply the positional R11 mapping to the legacy/test layout. Its
+  // controls may be in a different order and have explicit labels, which the
+  // semantic resolver handles more safely.
+  if (blocks.length < 3) return null;
+  const selects = Array.from(row.querySelectorAll(".hd-select"))
+    .filter(isVisible) as HTMLElement[];
+  const area = (row.querySelector(".hd-cascader") as HTMLElement | null)
+    || (Array.from(row.querySelectorAll(".cascader")).find(isVisible) as HTMLElement | undefined)
+    || null;
+  const inputs = visibleHolderTextControls(row);
+  if (selects.length < 3 || inputs.length < 2) return null;
+
+  const name = holderInputWithAliases(inputs, holderAliases.name) || inputs[0];
+  const documentNumber = holderInputWithAliases(inputs, holderAliases.document_number)
+    || inputs.find((input) => input !== name)
+    || null;
+  if (!documentNumber || documentNumber === name) return null;
+
+  // Prefer the select in the same visual block as the matching input. This
+  // remains correct if the portal inserts an optional English-name block.
+  const selectInBlock = (input: HolderTextControl): HTMLElement | null => {
+    const block = input.closest(".formGroup-item-body-left-item") as HTMLElement | null;
+    return block ? (block.querySelector(".hd-select") as HTMLElement | null) : null;
+  };
+  const holderType = selectInBlock(name) || selects[1];
+  const documentType = selectInBlock(documentNumber) || selects[2];
+  if (!holderType || !documentType || holderType === documentType) return null;
+
+  // The first hd-select is CountrySelect. The cascader is optional in a few
+  // historical layouts, so keep it nullable and let the caller use the
+  // semantic province/city fallback when it is absent.
+  return {
+    nationality: selects[0],
+    area,
+    holderType,
+    name,
+    documentType,
+    documentNumber,
+  };
+}
+
 function findButton(root: ParentNode, aliases: readonly string[], includeDisabled = false): HTMLElement {
   const buttons = uniqueElements(Array.from(root.querySelectorAll("button,a,[role='button'],input[type='button'],input[type='submit']"))
     .filter(isVisible)
@@ -1047,6 +1200,64 @@ async function saveHolderRow(row: HTMLElement): Promise<void> {
   throw new AdapterError("field_verification_failed", "著作权人信息尚未保存");
 }
 
+function holderValueIfPresent(row: HTMLElement, aliases: readonly string[], choice = false): string | null {
+  const control = choice
+    ? findUniqueChoiceControlIfPresent(row, aliases)
+    : findUniqueSemanticControlIfPresent(row, aliases);
+  return control ? readControlValue(control) : null;
+}
+
+function hasUsableOfficialHolderValue(value: string | null): boolean {
+  if (value === null) return false;
+  const normalized = normalizeVisibleText(value);
+  return Boolean(normalized) && !["请选择", "请选择国家", "请选择国家地区", "请选择身份类别", "请选择证件类型", "请选择地区", "无地区信息"].some((placeholder) => normalized === placeholder);
+}
+
+function officialApplicantRowIsReady(row: HTMLElement, holder: CopyrightHolder): boolean {
+  const official = officialHolderControls(row);
+  if (official) {
+    const name = readControlValue(official.name);
+    const documentNumber = readControlValue(official.documentNumber);
+    if (!name || !documentNumber) return false;
+    if (normalizedValue(name) !== normalizedValue(holder.name) || normalizedValue(documentNumber) !== normalizedValue(holder.document_number)) return false;
+    const requiredChoiceValues = [
+      readControlValue(official.nationality),
+      readControlValue(official.holderType),
+      readControlValue(official.documentType),
+    ];
+    if (requiredChoiceValues.some((value) => !hasUsableOfficialHolderValue(value))) return false;
+    return !official.area || hasUsableOfficialHolderValue(readControlValue(official.area));
+  }
+
+  // Keep the semantic fallback for an older R11 build or a compatibility
+  // page. The current official page takes the structural branch above.
+  const name = holderValueIfPresent(row, holderAliases.name);
+  const documentNumber = holderValueIfPresent(row, holderAliases.document_number);
+  if (!name || !documentNumber) return false;
+  if (normalizedValue(name) !== normalizedValue(holder.name) || normalizedValue(documentNumber) !== normalizedValue(holder.document_number)) return false;
+
+  // These controls are required by the real R11 validator. They can be
+  // disabled because they came from the authenticated account, but their
+  // displayed values must still be present before the extension proceeds.
+  const requiredChoiceValues = [
+    holderValueIfPresent(row, holderAliases.nationality, true),
+    holderValueIfPresent(row, holderAliases.holder_type, true),
+    holderValueIfPresent(row, holderAliases.document_type, true),
+  ];
+  if (requiredChoiceValues.some((value) => !hasUsableOfficialHolderValue(value))) return false;
+  const area = row.querySelector(".hd-cascader,.cascader") as HTMLElement | null;
+  return !area || hasUsableOfficialHolderValue(readControlValue(area));
+}
+
+async function waitForOfficialApplicantRow(row: HTMLElement, holder: CopyrightHolder, timeoutMs = 30_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (officialApplicantRowIsReady(row, holder)) return;
+    await waitForDomUpdate(3);
+  }
+  throw new AdapterError("field_verification_failed", "官方账户著作权人信息尚未完成加载或与申请信息不一致");
+}
+
 function bodyText(root: ParentNode): string {
   const body = root instanceof Document ? root.body : root as HTMLElement;
   return normalizeVisibleText(body?.innerText || root.textContent || "");
@@ -1073,6 +1284,19 @@ function hasChoiceCandidate(root: ParentNode, aliases: readonly string[]): boole
   return choiceControls(root).some((element) => scoreText(element, aliases) >= 30);
 }
 
+function officialSectionControl(root: ParentNode, heading: string, selector: string): HTMLElement | null {
+  const target = normalizeVisibleText(heading);
+  const sections = uniqueElements(Array.from(root.querySelectorAll(".application .fillin_item,.fillin_item"))
+    .filter(isVisible)) as HTMLElement[];
+  const matchingSections = sections.filter((section) => Array.from(section.querySelectorAll("h1,h2,h3,h4,h5,h6,[role='heading']"))
+    .some((item) => normalizeVisibleText(item.textContent || "").includes(target)));
+  if (!matchingSections.length) return null;
+  const controls = uniqueElements(matchingSections.flatMap((section) => Array.from(section.querySelectorAll(selector)).filter(isVisible))) as HTMLElement[];
+  if (!controls.length) return null;
+  if (controls.length !== 1) throw new AdapterError("field_ambiguous", heading);
+  return controls[0];
+}
+
 /**
  * These readiness checks intentionally only answer “has the portal rendered
  * the controls yet?”. They do not validate values and do not replace the
@@ -1096,10 +1320,21 @@ function hasCurrentR11ApplicationStructure(root: ParentNode): boolean {
 }
 
 export function hasDevelopmentPageControls(root: ParentNode = document): boolean {
-  const rows = holderRows(root);
-  return hasChoiceCandidate(root, textFieldAliases.software_category || [])
-    && hasChoiceCandidate(root, choiceAliases.development_method)
-    && rows.length > 0;
+  // The R11 development page mounts the owner editor after the classification
+  // and development-model components. In a real login session that owner row
+  // can arrive several Vue/API ticks after the page route changes. Requiring
+  // the row here makes the state machine wait for a condition it can itself
+  // handle, which looks like “the second page does nothing”. Use the stable
+  // page controls as the readiness anchor; the individual date and owner
+  // editors are then waited for by their own bounded setters.
+  const officialSections = Array.from(root.querySelectorAll(".application > .fillin_item,.application .fillin_item")).filter(isVisible);
+  const hasHeading = (name: string) => officialSections.some((section) => {
+    const heading = section.querySelector("h3,h2,h1,[role='heading']");
+    return Boolean(heading && normalizeVisibleText(heading.textContent || "").includes(normalizeVisibleText(name)));
+  });
+  const officialSkeleton = hasHeading("软件分类") && hasHeading("开发方式");
+  return (officialSkeleton || hasChoiceCandidate(root, textFieldAliases.software_category || []))
+    && (officialSkeleton || hasChoiceCandidate(root, choiceAliases.development_method));
 }
 
 export function hasFeaturesPageControls(root: ParentNode = document): boolean {
@@ -1184,7 +1419,13 @@ export function detectR11Page(root: ParentNode = document): R11Page {
 }
 
 export class R11Adapter {
+  private operation = "page";
+
   constructor(private readonly root: Document = document) {}
+
+  diagnosticOperation(): string {
+    return this.operation;
+  }
 
   page(): R11Page {
     return detectR11Page(this.root);
@@ -1220,6 +1461,7 @@ export class R11Adapter {
 
   async fillCurrentPage(form: CopyrightFormData): Promise<R11Page> {
     const page = this.page();
+    this.operation = `${page}.start`;
     if (form.development_method !== "independent" && form.development_method !== "cooperative" && form.development_method !== "commissioned" && form.development_method !== "assigned_task") {
       throw new AdapterError("unsupported_development_method");
     }
@@ -1233,9 +1475,13 @@ export class R11Adapter {
   }
 
   private async fillApplicationPage(form: CopyrightFormData): Promise<void> {
+    this.operation = "application.software_full_name";
     await fillText(this.root, textFieldAliases.software_full_name || [], form.software_full_name);
+    this.operation = "application.software_short_name";
     await fillOptionalText(this.root, textFieldAliases.software_short_name || [], form.software_short_name);
+    this.operation = "application.version";
     await fillText(this.root, textFieldAliases.version || [], form.version);
+    this.operation = "application.rights_acquisition";
     await choose(this.root, choiceAliases.rights_acquisition_method, form.rights_acquisition_method, choiceLabels.rights_acquisition_method[form.rights_acquisition_method]);
     await waitForDomUpdate(2);
     if (form.rights_acquisition_method !== "original") {
@@ -1254,20 +1500,38 @@ export class R11Adapter {
   }
 
   private async fillDevelopmentPage(form: CopyrightFormData): Promise<void> {
-    await fillTextOrChoice(this.root, textFieldAliases.software_category || [], form.software_category, [form.software_category]);
+    const softwareCategory = form.software_category.trim();
+    if (!isOfficialSoftwareCategory(softwareCategory)) {
+      throw new AdapterError(
+        "portal_structure_changed",
+        "软件分类必须先在应用中选择：应用软件、嵌入式软件、中间件或操作系统",
+      );
+    }
+    this.operation = "development.software_category";
+    const categoryControl = officialSectionControl(this.root, "软件分类", ".hd-select");
+    if (categoryControl) await chooseCustomSelect(categoryControl, this.root, softwareCategory, [softwareCategory]);
+    else await fillTextOrChoice(this.root, textFieldAliases.software_category || [], softwareCategory, [softwareCategory]);
+    this.operation = "development.work_type";
     await choose(this.root, choiceAliases.work_type, form.work_type, choiceLabels.work_type[form.work_type]);
+    this.operation = "development.development_method";
     await choose(this.root, choiceAliases.development_method, form.development_method, choiceLabels.development_method[form.development_method]);
     await waitForDomUpdate(2);
     if (form.development_method !== "independent") {
+      this.operation = "development.shared_holders";
       const sharedHolderControl = findUniqueChoiceControlIfPresent(this.root, choiceAliases.cooperate_is_only);
       if (sharedHolderControl) {
         await choose(this.root, choiceAliases.cooperate_is_only, form.copyright_holders.length > 1 ? "是" : "否", form.copyright_holders.length > 1 ? ["是"] : ["否"]);
       }
     }
-    await fillText(this.root, textFieldAliases.development_date || [], form.development_date);
+    this.operation = "development.complete_date";
+    const dateControl = officialSectionControl(this.root, "开发完成日期", ".datepicker-input input,.datePicker input,.datepicker input");
+    if (dateControl) await setControlValue(dateControl, form.development_date);
+    else await fillText(this.root, textFieldAliases.development_date || [], form.development_date);
+    this.operation = "development.publish_status";
     await choose(this.root, choiceAliases.is_published, String(form.is_published), choiceLabels.is_published[String(form.is_published) as "true" | "false"]);
     await waitForDomUpdate(2);
     if (form.is_published) {
+      this.operation = "development.first_publication";
       await fillText(this.root, textFieldAliases.first_publication_date || [], form.first_publication_date);
       await fillText(this.root, textFieldAliases.first_publication_country || [], form.first_publication_country);
       await fillText(this.root, textFieldAliases.first_publication_city || [], form.first_publication_city);
@@ -1278,6 +1542,7 @@ export class R11Adapter {
     // only the rows added by the user still need to be filled. Rewriting row
     // 0 would clear dependent country/area/type fields and is the reason a
     // page can appear filled while R11 still reports required-field errors.
+    this.operation = "development.copyright_holders";
     await this.fillHolders(form.copyright_holders, false, form.application_method === "copyright_holder");
   }
 
@@ -1408,18 +1673,32 @@ export class R11Adapter {
 
   private async fillHolders(holders: CopyrightHolder[], legacy: boolean, firstRowIsOfficialApplicant = false): Promise<void> {
     if (!holders.length) throw new AdapterError("field_not_found", "著作权人");
-    let rows = holderRows(this.root);
     const rowsNeeded = firstRowIsOfficialApplicant ? Math.max(1, holders.length) : holders.length;
+    let rows = holderRows(this.root);
+    // The official account row is created asynchronously after the identity
+    // page has completed. Wait for that initial row instead of immediately
+    // searching for “+添加著作权人” and failing the whole second page.
+    const rowsDeadline = Date.now() + 20_000;
+    while (rows.length < Math.min(1, rowsNeeded) && Date.now() < rowsDeadline) {
+      await waitForDomUpdate(3);
+      rows = holderRows(this.root);
+    }
+    if (rows.length < Math.min(1, rowsNeeded)) throw new AdapterError("field_not_found", "著作权人行");
+    if (firstRowIsOfficialApplicant) await waitForOfficialApplicantRow(rows[0], holders[0]);
     while (rows.length < rowsNeeded) {
       const button = findButton(this.root, ["增加著作权人", "添加著作权人", "新增著作权人", "增加权利人"]);
       button.click();
-      await waitForDomUpdate(3);
-      rows = holderRows(this.root);
-      if (rows.length < rowsNeeded) throw new AdapterError("portal_structure_changed", "著作权人行未完成渲染");
+      const addDeadline = Date.now() + 8_000;
+      while (rows.length < rowsNeeded && Date.now() < addDeadline) {
+        await waitForDomUpdate(3);
+        rows = holderRows(this.root);
+      }
+      if (rows.length < rowsNeeded) throw new AdapterError("field_not_found", "著作权人行未完成渲染");
     }
     if (rows.length !== rowsNeeded) throw new AdapterError("field_ambiguous", "著作权人行数无法确认");
     const firstFormIndex = firstRowIsOfficialApplicant ? 1 : 0;
     for (let formIndex = firstFormIndex; formIndex < holders.length; formIndex += 1) {
+      this.operation = `development.holder.${formIndex}`;
       await this.fillHolderRow(rows[formIndex], holders[formIndex], legacy);
     }
   }
@@ -1436,6 +1715,25 @@ export class R11Adapter {
       await fillText(row, holderAliases.province, holder.province);
       await fillText(row, holderAliases.city, holder.city);
       await fillOptionalText(row, holderAliases.birth_or_established_date, holder.birth_or_established_date || "");
+      await saveHolderRow(row);
+      return;
+    }
+
+    const official = officialHolderControls(row);
+    if (official) {
+      const typeLabels = holder.holder_type === "person"
+        ? [holder.category || "自然人", "自然人", "个人"]
+        : [holder.category || "企业法人", "企业法人", "企业", "单位"];
+
+      // This is the component order used by the authenticated R11 owner
+      // editor. Each custom select is opened once and receives one concrete
+      // option click; no DOM value is written directly into a Vue select.
+      await chooseCustomSelect(official.nationality, this.root, holder.nationality, [holder.nationality, "中国"]);
+      if (official.area) await chooseCascader(official.area, this.root, [holder.province, holder.city]);
+      await chooseCustomSelect(official.holderType, this.root, holder.category || holder.holder_type, typeLabels);
+      await setControlValue(official.name, holder.name);
+      await chooseCustomSelect(official.documentType, this.root, holder.document_type, holderDocumentTypeLabels(holder));
+      await setControlValue(official.documentNumber, holder.document_number);
       await saveHolderRow(row);
       return;
     }

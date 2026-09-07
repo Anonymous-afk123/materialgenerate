@@ -57,6 +57,33 @@ interface MultiChoiceFieldProps {
   maxLength?: number;
 }
 
+interface SingleChoiceFieldProps {
+  id: string;
+  label: string;
+  value: string;
+  options: readonly string[];
+  onChange: (value: string) => void;
+  disabled?: boolean;
+  hint?: string;
+}
+
+function SingleChoiceField({ id, label, value, options, onChange, disabled, hint }: SingleChoiceFieldProps) {
+  const trimmedValue = value.trim();
+  const isLegacyValue = Boolean(trimmedValue) && !options.includes(trimmedValue);
+
+  return (
+    <div className="form-field">
+      <label className="form-label" htmlFor={id}>{label}</label>
+      <select id={id} className="app-select" value={value} onChange={(event) => onChange(event.target.value)} disabled={disabled}>
+        <option value="">请选择{label}</option>
+        {isLegacyValue && <option value={trimmedValue}>历史值（请重新选择）：{trimmedValue}</option>}
+        {options.map((option) => <option value={option} key={option}>{option}</option>)}
+      </select>
+      <span className="form-hint">{hint || "请选择一个选项"}</span>
+    </div>
+  );
+}
+
 function MultiChoiceField({ id, label, value, options, onChange, disabled, maxLength }: MultiChoiceFieldProps) {
   const { selected: selectedOptions, custom: customValue } = parseChoiceSelection(value, options);
   const [limitErrorValue, setLimitErrorValue] = useState<string | null>(null);
@@ -196,14 +223,14 @@ export function CopyrightFormEditor({ form, onChange, disabled }: Props) {
           {input("software_full_name", "软件全称")}
           {input("software_short_name", "软件简称")}
           {input("version", "版本号")}
-          <MultiChoiceField
+          <SingleChoiceField
             id="software_category"
             label="软件分类"
             value={form.software_category}
             options={SOFTWARE_CATEGORY_OPTIONS}
-            maxLength={COPYRIGHT_SHORT_TEXT_MAX}
             onChange={(value) => set("software_category", value)}
             disabled={disabled}
+            hint="与中国版权保护中心 R11 页面一致，只能选择一项。"
           />
           {input("development_date", "开发完成日期", "date")}
           <div className="form-field">
@@ -339,7 +366,7 @@ export function CopyrightFormEditor({ form, onChange, disabled }: Props) {
       <section className="form-section">
         <div className="form-section__header">
           <h2>申请办理方式</h2>
-          <p>申请人地址、邮政编码、联系人和联系电话属于官网填报资料，请在设置中维护默认值。</p>
+          <p>用于生成申请信息摘要。</p>
         </div>
         <div className="form-grid">
           <div className="form-field">
@@ -347,9 +374,6 @@ export function CopyrightFormEditor({ form, onChange, disabled }: Props) {
             <select id="application_method" className="app-select" value={form.application_method} onChange={(event) => set("application_method", event.target.value as CopyrightFormData["application_method"])} disabled={disabled}>
               <option value="copyright_holder">著作权人申请办理</option><option value="agent">代理人申请办理</option>
             </select>
-          </div>
-          <div className="form-field form-field--full">
-            <p className="form-hint">官网自动填报前，系统会检查设置中的四项资料是否完整；不会从本申请或旧申请中自动猜测联系方式。</p>
           </div>
         </div>
       </section>

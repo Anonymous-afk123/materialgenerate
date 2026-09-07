@@ -11,10 +11,6 @@
     "ts-check": "tsc -p tsconfig.json",
     "api:generate": "node --experimental-strip-types scripts/generate-openapi.ts",
     "api:check": "node --experimental-strip-types scripts/generate-openapi.ts --check",
-    "extension:build": "node scripts/build-extension.mjs",
-    "extension:package": "pnpm extension:build && node scripts/package-extension.mjs",
-    "extension:check": "tsc -p browser-extension/tsconfig.json",
-    "extension:test": "node --experimental-strip-types --test test/filing-extension.test.ts",
     "test": "pnpm api:check && node --experimental-strip-types --test test/*.test.ts"
   },
   "dependencies": {

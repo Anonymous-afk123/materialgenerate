@@ -10,6 +10,7 @@ export interface PublicLlmConfig {
   id: string;
   name: string;
   provider: Provider;
+  baseUrl: string;
   model: string;
   keyLast4: string;
   createdAt: string;
@@ -21,6 +22,7 @@ interface LlmConfigRow {
   user_id: string;
   name: string;
   provider: Provider;
+  base_url: string;
   model: string;
   ciphertext: string;
   iv: string;
@@ -36,6 +38,7 @@ function toPublicConfig(row: LlmConfigRow): PublicLlmConfig {
     id: row.id,
     name: row.name,
     provider: row.provider,
+    baseUrl: row.base_url,
     model: row.model,
     keyLast4: row.key_last4,
     createdAt: row.created_at,
@@ -46,7 +49,7 @@ function toPublicConfig(row: LlmConfigRow): PublicLlmConfig {
 export async function listOwnedLlmConfigs(userId: string): Promise<PublicLlmConfig[]> {
   const result = await getSupabaseAdmin()
     .from("llm_configs")
-    .select("id,user_id,name,provider,model,key_last4,created_at,updated_at")
+    .select("id,user_id,name,provider,base_url,model,key_last4,created_at,updated_at")
     .eq("user_id", userId)
     .order("updated_at", { ascending: false });
   if (result.error) throw new Error("model configuration lookup failed");
@@ -68,7 +71,7 @@ export async function getOwnedLlmSecret(userId: string, id: string) {
   const row = await getOwnedLlmConfig(userId, id);
   if (!row) return null;
   const apiKey = decryptApiKey(row);
-  return { provider: row.provider, model: row.model, apiKey };
+  return { provider: row.provider, baseUrl: row.base_url, model: row.model, apiKey };
 }
 
 export async function saveOwnedLlmConfig(
@@ -79,6 +82,7 @@ export async function saveOwnedLlmConfig(
   const payload = {
     name: input.name || `${input.provider} 配置`,
     provider: input.provider,
+    base_url: input.baseUrl,
     model: input.model,
     ...encrypted,
     updated_at: new Date().toISOString(),
@@ -89,12 +93,12 @@ export async function saveOwnedLlmConfig(
       .update(payload)
       .eq("id", input.id)
       .eq("user_id", userId)
-      .select("id,user_id,name,provider,model,key_last4,created_at,updated_at")
+      .select("id,user_id,name,provider,base_url,model,key_last4,created_at,updated_at")
       .maybeSingle()
     : await getSupabaseAdmin()
       .from("llm_configs")
       .insert({ ...payload, user_id: userId })
-      .select("id,user_id,name,provider,model,key_last4,created_at,updated_at")
+      .select("id,user_id,name,provider,base_url,model,key_last4,created_at,updated_at")
       .single();
   if (result.error || !result.data) throw new Error(input.id ? "模型配置不存在" : "模型配置保存失败");
   return toPublicConfig(result.data as LlmConfigRow);

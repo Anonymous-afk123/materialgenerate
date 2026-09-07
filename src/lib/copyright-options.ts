@@ -1,13 +1,15 @@
 export const SOFTWARE_CATEGORY_OPTIONS = [
   "应用软件",
   "嵌入式软件",
-  "信息管理软件",
-  "网络应用软件",
-  "游戏软件",
-  "工业软件",
-  "物联网软件",
-  "人工智能软件",
+  "中间件",
+  "操作系统",
 ] as const;
+
+export type SoftwareCategory = typeof SOFTWARE_CATEGORY_OPTIONS[number];
+
+export function isOfficialSoftwareCategory(value: string): value is SoftwareCategory {
+  return SOFTWARE_CATEGORY_OPTIONS.includes(value.trim() as SoftwareCategory);
+}
 
 export const TARGET_INDUSTRY_OPTIONS = [
   "通用/综合",

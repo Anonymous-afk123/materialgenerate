@@ -36,6 +36,7 @@ export async function POST(request: NextRequest) {
       sourceBuffer,
       sourceFileName: sourceArchive.archive.fileName,
       provider: llmConfig.provider,
+      baseUrl: llmConfig.baseUrl,
       model: llmConfig.model,
       apiKey: llmConfig.apiKey,
       signal: request.signal,

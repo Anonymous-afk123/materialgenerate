@@ -129,17 +129,20 @@ function fixture(form: CopyrightFormData, fileCount: number): string {
 function multiPageFixture(
   form: CopyrightFormData,
   delayFirstApplicationNavigation = false,
-  softwareCategoryMode: "normal" | "async" | "async-manual" = "normal",
+  softwareCategoryMode: "normal" | "async" | "async-manual" | "missing" = "normal",
+  delayDevelopmentOwner = false,
 ): string {
   const serializedForm = JSON.stringify(form).replace(/</g, "\\u003c");
   const serializedDelay = JSON.stringify(delayFirstApplicationNavigation);
   const serializedSoftwareCategoryMode = JSON.stringify(softwareCategoryMode);
+  const serializedDelayDevelopmentOwner = JSON.stringify(delayDevelopmentOwner);
   return `<!doctype html><html><body>
     <main id="r11-app"></main>
     <script>
       const form = ${serializedForm};
       const delayFirstApplicationNavigation = ${serializedDelay};
       const softwareCategoryMode = ${serializedSoftwareCategoryMode};
+      const delayDevelopmentOwner = ${serializedDelayDevelopmentOwner};
       const app = document.getElementById("r11-app");
       let applicationNextAttempts = 0;
       let finalSubmitClicks = 0;
@@ -195,22 +198,25 @@ function multiPageFixture(
 
       function softwareCategoryField() {
         return '<div class="fillin_item"><h3>软件分类</h3><div class="fillin_info"><div class="hd-select" data-name="software-category">'
-          + '<div class="box"></div><div class="dropdown" style="display:none">'
+          + '<div class="box"></div><div class="dropdown" style="display:none"><div class="hd-scroll"><div class="hd_scroll_content">'
           + ['应用软件', '嵌入式软件', '中间件', '操作系统'].map((item) => '<div class="hd-option" data-value="' + item + '">' + item + '</div>').join("")
-          + '</div></div></div></div>';
+          + '</div></div></div></div></div></div>';
       }
 
       function holderRow(index) {
         const holder = form.copyright_holders[index];
         const options = holder.holder_type === "person" ? ["自然人", "企业法人"] : ["自然人", holder.category || "企业法人"];
         const autoApplicant = form.application_method === "copyright_holder" && index === 0;
-        return '<div class="formGroup-item" data-holder-index="' + index + '">'
-          + selectField("人员类型", "holder-type-" + index, options, autoApplicant ? holder.category : "")
-          + '<div class="fillin_item">姓名/名称<div class="hd-input"><input id="holder-name-' + index + '" value="' + (autoApplicant ? holder.name : '') + '"></div></div>'
-          + selectField("证件类型", "holder-document-type-" + index, Array.from(new Set([holder.document_type, "统一社会信用代码证书"])), autoApplicant ? holder.document_type : "")
-          + '<div class="fillin_item">证件号码<div class="hd-input"><input id="holder-document-number-' + index + '" value="' + (autoApplicant ? holder.document_number : '') + '"></div></div>'
-          + selectField("国籍", "holder-nationality-" + index, ["中国", "其他"], autoApplicant ? holder.nationality : "")
-          + '<div class="fillin_item">省市<div class="hd-cascader" data-province="' + holder.province + '" data-city="' + holder.city + '"><div class="label">' + (autoApplicant ? holder.province + ' / ' + holder.city : '') + '</div><div class="dropdown" style="display:none"><ul class="options"><li class="option" data-level="province">' + holder.province + '</li></ul></div></div></div>'
+        const customSelect = (id, values, selected = "") => '<div class="hd-select" data-name="' + id + '"><div class="box">' + selected + '</div><div class="dropdown" style="display:none">' + values.map((item) => '<div class="hd-option' + (item === selected ? ' selected' : '') + '" data-value="' + item + '">' + item + '</div>').join("") + '</div></div>';
+        // This mirrors the authenticated R11 SoftFormGroupItem. It has no
+        // visible field labels: the extension must use component order and
+        // the placeholders on the two text inputs.
+        return '<div class="formGroup-item" data-holder-index="' + index + '"><div class="formGroup-item-body"><div class="formGroup-item-body-left">'
+          + '<div class="formGroup-item-body-left-item">' + customSelect("holder-nationality-" + index, ["中国", "其他"], autoApplicant ? holder.nationality : "") + '</div>'
+          + '<div class="formGroup-item-body-left-item"><div class="hd-cascader" data-province="' + holder.province + '" data-city="' + holder.city + '"><div class="label">' + (autoApplicant ? holder.province + ' / ' + holder.city : '') + '</div><div class="dropdown" style="display:none"><ul class="options"><li class="option" data-level="province">' + holder.province + '</li></ul></div></div></div>'
+          + '<div class="formGroup-item-body-left-item">' + customSelect("holder-type-" + index, options, autoApplicant ? holder.category : '') + '<div class="hd-input"><input id="holder-name-' + index + '" placeholder="姓名或名称，与身份证明文件保持一致" value="' + (autoApplicant ? holder.name : '') + '"></div></div>'
+          + '<div class="formGroup-item-body-left-item">' + customSelect("holder-document-type-" + index, Array.from(new Set([holder.document_type, "统一社会信用代码证书"])), autoApplicant ? holder.document_type : '') + '<div class="hd-input"><input id="holder-document-number-' + index + '" placeholder="请输入证件号码" value="' + (autoApplicant ? holder.document_number : '') + '"></div></div>'
+          + '</div></div>'
           + (autoApplicant ? '' : '<button type="button" class="holder-save">保存</button>')
           + '</div>';
       }
@@ -226,8 +232,10 @@ function multiPageFixture(
             if (control.dataset.name === "software-category" && opening && softwareCategoryMode !== "normal" && !control.dataset.optionsReady) {
               control.querySelectorAll(".hd-option").forEach((option) => { option.style.display = "none"; });
               window.setTimeout(() => {
-                control.dataset.optionsReady = "true";
-                control.querySelectorAll(".hd-option").forEach((option) => { option.style.display = "block"; });
+              control.dataset.optionsReady = "true";
+                if (softwareCategoryMode !== "missing") {
+                  control.querySelectorAll(".hd-option").forEach((option) => { option.style.display = "block"; });
+                }
                 if (softwareCategoryMode === "async-manual") {
                   control.querySelector(".hd-option")?.click();
                 }
@@ -352,16 +360,23 @@ function multiPageFixture(
 
       function renderDevelopment() {
         location.hash = "#/development";
+        const initialOwnerMarkup = delayDevelopmentOwner ? '' : holderRow(0);
         app.innerHTML = "<h1>软件开发信息</h1>"
           + softwareCategoryField()
           + radioField("软件作品说明", "work-type", ["原创", "修改"])
           + developmentMethodAndSharedField(form.development_method !== "independent")
           + dateField("开发完成日期", "development-date")
           + radioField("是否发表", "published", ["未发表", "已发表"])
-          + '<section class="formGroup" id="holder-list">' + holderRow(0) + '</section>'
+          + '<section class="formGroup" id="holder-list">' + initialOwnerMarkup + '</section>'
           + '<div class="fillin_item">合作开发合同或协议<div class="upLoadBox"><input id="cooperation-proof" class="hdUpload-inputFile" type="file"><span class="proof-status"></span></div></div>'
           + '<button id="add-holder">+添加著作权人</button><button id="next-development">下一步</button>';
         wireControls();
+        if (delayDevelopmentOwner) {
+          window.setTimeout(() => {
+            document.getElementById("holder-list")?.insertAdjacentHTML("beforeend", holderRow(0));
+            wireControls();
+          }, 420);
+        }
         document.getElementById("cooperation-proof").onchange = () => {
           window.setTimeout(() => { document.querySelector(".proof-status").textContent = "上传成功"; }, 120);
         };
@@ -493,16 +508,11 @@ async function deliver(page: Page, message: FileTransferMessage | PortalMessage)
   }, message);
 }
 
-async function waitForCode(page: Page, code: string, timeout = 10_000): Promise<void> {
-  try {
-    await page.waitForFunction((expected) => {
-      const items = (window as unknown as { __messages: PortalMessage[] }).__messages || [];
-      return items.some((item) => (item.event as PortalMessage | undefined)?.code === expected);
-    }, code, { timeout });
-  } catch (error) {
-    const seen = await messages(page);
-    throw new Error(`${error instanceof Error ? error.message : String(error)}\\nmessages=${JSON.stringify(seen)}`);
-  }
+async function waitForCode(page: Page, code: string, timeout = 30_000): Promise<void> {
+  await page.waitForFunction((expected) => {
+    const items = (window as unknown as { __messages: PortalMessage[] }).__messages || [];
+    return items.some((item) => (item.event as PortalMessage | undefined)?.code === expected);
+  }, code, { timeout });
 }
 
 async function waitForEventType(page: Page, type: string): Promise<void> {
@@ -665,6 +675,34 @@ test("R11 multi-page SPA fills each page after the user chooses applicant identi
   }
 });
 
+test("R11 starts the second page before its authenticated owner row finishes mounting", async () => {
+  await ensureOfficialBundle();
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    const form = formFor([holder("person", 0)], "independent");
+    await page.setContent(multiPageFixture(form, false, "normal", true));
+    await installMockRuntime(page);
+    await page.addScriptTag({ path: officialBundle });
+    await page.waitForFunction(() => (window as unknown as { __messages: PortalMessage[] }).__messages?.some((item) => item.type === "OFFICIAL_READY"));
+    const manifest = manifestFor(form, 2);
+    await deliver(page, { protocol: "softreg-filing/v1", source: "softreg-extension", type: "BEGIN_FILING", jobId: manifest.jobId, manifest });
+    await waitForCode(page, "login_required");
+    await page.locator("#applicant").click();
+    await waitForCode(page, "review_required", 20_000);
+    assert.equal(await page.evaluate(() => location.hash), "#/confirm");
+    const values = await page.evaluate(() => ({
+      category: (window as unknown as { __developmentValues?: { category?: string } }).__developmentValues?.category || "",
+      date: (window as unknown as { __developmentValues?: { date?: string } }).__developmentValues?.date || "",
+    }));
+    assert.equal(values.category, "应用软件");
+    assert.equal(values.date, form.development_date);
+    await page.close();
+  } finally {
+    await browser.close();
+  }
+});
+
 test("R11 waits for an async software category option without toggling the select", async () => {
   await ensureOfficialBundle();
   const browser = await chromium.launch({ headless: true });
@@ -696,6 +734,33 @@ test("R11 waits for an async software category option without toggling the selec
       assert.equal(values.categoryBoxClicks, 1);
       await page.close();
     }
+  } finally {
+    await browser.close();
+  }
+});
+
+test("R11 stops after one category-menu attempt when no matching option is exposed", async () => {
+  await ensureOfficialBundle();
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    const form = formFor([holder("person", 0)], "independent");
+    await page.setContent(multiPageFixture(form, false, "missing"));
+    await installMockRuntime(page);
+    await page.addScriptTag({ path: officialBundle });
+    await page.waitForFunction(() => (window as unknown as { __messages: PortalMessage[] }).__messages?.some((item) => item.type === "OFFICIAL_READY"));
+    const manifest = manifestFor(form, 2);
+    await deliver(page, { protocol: "softreg-filing/v1", source: "softreg-extension", type: "BEGIN_FILING", jobId: manifest.jobId, manifest });
+    await waitForCode(page, "login_required");
+    await page.locator("#applicant").click();
+    await waitForCode(page, "portal_structure_changed");
+    const values = await page.evaluate(() => ({
+      categoryBoxClicks: (window as unknown as { __softwareCategoryBoxClicks: number }).__softwareCategoryBoxClicks,
+      categoryMenuDisplay: (document.querySelector("[data-name='software-category'] .dropdown") as HTMLElement | null)?.style.display || "",
+    }));
+    assert.equal(values.categoryBoxClicks, 1);
+    assert.equal(values.categoryMenuDisplay, "block");
+    await page.close();
   } finally {
     await browser.close();
   }

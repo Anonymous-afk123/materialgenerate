@@ -8,11 +8,11 @@ import { apiEndpoint } from "@/lib/api-base";
 import { authorizedFetch } from "@/lib/auth";
 import {
   clearLegacyByok,
+  defaultProviderBaseUrls,
   loadByok,
-  providerModels,
+  providerForBaseUrl,
   saveByok,
   type ByokConfig,
-  type Provider,
   type SavedLlmConfig,
 } from "@/lib/byok";
 
@@ -31,6 +31,7 @@ function asSavedConfig(value: SavedLlmConfig): ByokConfig {
     id: value.id,
     name: value.name,
     provider: value.provider,
+    baseUrl: value.baseUrl,
     model: value.model,
     keyLast4: value.keyLast4,
   };
@@ -38,8 +39,8 @@ function asSavedConfig(value: SavedLlmConfig): ByokConfig {
 
 export function ByokPanel({ value, onChange }: Props) {
   const [configs, setConfigs] = useState<SavedLlmConfig[]>([]);
-  const [provider, setProvider] = useState<Provider>(value?.provider || "openai");
-  const [model, setModel] = useState(value?.model || providerModels.openai[0]);
+  const [baseUrl, setBaseUrl] = useState(value?.baseUrl || defaultProviderBaseUrls.openai);
+  const [model, setModel] = useState(value?.model || "gpt-5-mini");
   const [name, setName] = useState(value?.name || "我的 AI 配置");
   const [apiKey, setApiKey] = useState(value?.apiKey || "");
   const [loading, setLoading] = useState(true);
@@ -53,7 +54,7 @@ export function ByokPanel({ value, onChange }: Props) {
     const timer = window.setTimeout(() => {
       const legacyOrSaved = loadByok();
       if (legacyOrSaved) {
-        setProvider(legacyOrSaved.provider);
+        setBaseUrl(legacyOrSaved.baseUrl);
         setModel(legacyOrSaved.model);
         setApiKey(legacyOrSaved.apiKey || "");
         if (legacyOrSaved.name) setName(legacyOrSaved.name);
@@ -69,7 +70,7 @@ export function ByokPanel({ value, onChange }: Props) {
           if (legacyOrSaved?.apiKey) return;
           const selected = (legacyOrSaved?.id && list.find((item) => item.id === legacyOrSaved.id)) || list[0];
           if (selected) {
-            setProvider(selected.provider);
+            setBaseUrl(selected.baseUrl);
             setModel(selected.model);
             setName(selected.name);
             onChange(asSavedConfig(selected));
@@ -90,11 +91,11 @@ export function ByokPanel({ value, onChange }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function updateDraft(next: Partial<{ provider: Provider; model: string; name: string }>) {
-    const nextProvider = next.provider || provider;
+  function updateDraft(next: Partial<{ baseUrl: string; model: string; name: string }>) {
+    const nextBaseUrl = next.baseUrl ?? baseUrl;
     const nextModel = next.model || model;
     const nextName = next.name ?? name;
-    setProvider(nextProvider);
+    setBaseUrl(nextBaseUrl);
     setModel(nextModel);
     setName(nextName);
     setMessage(null);
@@ -105,7 +106,7 @@ export function ByokPanel({ value, onChange }: Props) {
     const selected = configs.find((item) => item.id === id);
     if (!selected) return;
     const next = asSavedConfig(selected);
-    setProvider(next.provider);
+    setBaseUrl(next.baseUrl);
     setModel(next.model);
     setName(next.name || "我的 AI 配置");
     setApiKey("");
@@ -115,8 +116,16 @@ export function ByokPanel({ value, onChange }: Props) {
   }
 
   async function saveConfig(): Promise<ByokConfig | null> {
+    if (!baseUrl.trim()) {
+      setError("必须填写 Base URL。");
+      return null;
+    }
+    if (!model.trim()) {
+      setError("必须填写模型名称。");
+      return null;
+    }
     if (!apiKey.trim()) {
-      setError("保存配置时需要重新输入 API Key；已保存配置可直接测试和生成。");
+      setError("必须填写 API Key；已保存配置可直接测试和生成。");
       return null;
     }
     setSaving(true);
@@ -126,7 +135,7 @@ export function ByokPanel({ value, onChange }: Props) {
       const response = await authorizedFetch(apiEndpoint("/api/llm-configs"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: value?.id, name, provider, model, apiKey: apiKey.trim() }),
+        body: JSON.stringify({ id: value?.id, name, provider: providerForBaseUrl(baseUrl), baseUrl: baseUrl.trim(), model: model.trim(), apiKey: apiKey.trim() }),
       });
       const body = await response.json().catch(() => ({})) as ApiEnvelope<SavedLlmConfig>;
       if (!response.ok || !body.data) throw new Error(body.msg || "保存模型配置失败");
@@ -136,10 +145,10 @@ export function ByokPanel({ value, onChange }: Props) {
       clearLegacyByok();
       saveByok(next);
       onChange(next);
-      setProvider(next.provider);
+      setBaseUrl(next.baseUrl);
       setModel(next.model);
       setName(next.name || "我的 AI 配置");
-      setMessage(`配置已加密保存（${next.provider} · ${next.model} · ****${next.keyLast4}）`);
+      setMessage(`配置已加密保存（${next.baseUrl} · ${next.model} · ****${next.keyLast4}）`);
       return next;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "保存模型配置失败");
@@ -192,8 +201,8 @@ export function ByokPanel({ value, onChange }: Props) {
   }
 
   const configured = Boolean(value?.id);
-  const selectedProvider = value?.provider || provider;
-  const selectedModel = value?.model || model;
+  const selectedBaseUrl = baseUrl;
+  const selectedModel = model;
 
   return (
     <div className="settings-card">
@@ -207,7 +216,7 @@ export function ByokPanel({ value, onChange }: Props) {
 
       <div className="settings-card__notice">
         <ShieldCheck size={15} />
-        <span>API Key 使用 AES-256-GCM 加密保存到服务器。前端和查询接口只显示供应商、模型与末四位，不保存完整 Key。</span>
+        <span>Base URL、模型和 API Key 都必须由你填写。API Key 使用 AES-256-GCM 加密保存到服务器，页面只显示 Key 末四位。</span>
       </div>
 
       <div className="settings-fields">
@@ -216,7 +225,7 @@ export function ByokPanel({ value, onChange }: Props) {
             <label className="form-label" htmlFor="byok-saved-config">已保存配置</label>
             <select id="byok-saved-config" className="app-select" value={value?.id || ""} onChange={(event) => selectSavedConfig(event.target.value)}>
               <option value="">选择配置</option>
-              {configs.map((item) => <option value={item.id} key={item.id}>{item.name} · {item.provider} · ****{item.keyLast4}</option>)}
+              {configs.map((item) => <option value={item.id} key={item.id}>{item.name} · {item.model} · ****{item.keyLast4}</option>)}
             </select>
           </div>
         )}
@@ -225,21 +234,16 @@ export function ByokPanel({ value, onChange }: Props) {
           <Input id="byok-name" value={name} onChange={(event) => updateDraft({ name: event.target.value })} disabled={loading || saving} />
         </div>
         <div className="form-field">
-          <label className="form-label" htmlFor="byok-provider">服务商</label>
-          <select id="byok-provider" className="app-select" value={selectedProvider} onChange={(event) => updateDraft({ provider: event.target.value as Provider, model: providerModels[event.target.value as Provider][0] })} disabled={loading || saving}>
-            <option value="openai">OpenAI</option>
-            <option value="deepseek">DeepSeek</option>
-          </select>
+          <label className="form-label" htmlFor="byok-base-url">Base URL</label>
+          <Input id="byok-base-url" type="url" value={selectedBaseUrl} onChange={(event) => updateDraft({ baseUrl: event.target.value })} placeholder="https://api.openai.com/v1" disabled={loading || saving} required />
         </div>
         <div className="form-field">
           <label className="form-label" htmlFor="byok-model">模型</label>
-          <select id="byok-model" className="app-select" value={selectedModel} onChange={(event) => updateDraft({ model: event.target.value })} disabled={loading || saving}>
-            {providerModels[selectedProvider].map((item) => <option value={item} key={item}>{item}</option>)}
-          </select>
+          <Input id="byok-model" value={selectedModel} onChange={(event) => updateDraft({ model: event.target.value })} placeholder="例如 gpt-4o、deepseek-chat" disabled={loading || saving} required />
         </div>
         <div className="form-field form-field--full">
           <label className="form-label" htmlFor="byok-key">API Key</label>
-          <Input id="byok-key" type="password" autoComplete="new-password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={configured ? `已保存，****${value?.keyLast4 || ""}；修改配置时重新输入` : "粘贴你的 API Key"} disabled={loading || saving} />
+          <Input id="byok-key" type="password" autoComplete="new-password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={configured ? `已保存，****${value?.keyLast4 || ""}；修改配置时重新输入` : "粘贴你的 API Key"} disabled={loading || saving} required />
         </div>
       </div>
 

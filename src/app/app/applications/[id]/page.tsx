@@ -271,7 +271,7 @@ export default function ApplicationEditPage() {
                     <span><Check size={13} /></span><div><strong>确认并保存</strong><small>检查内容后保存最新版本</small></div>
                   </div>
                   <div className="app-check-list__item">
-                    <span><FileOutput size={13} /></span><div><strong>生成申报材料</strong><small>源码文档、用户手册和采集表</small></div>
+                    <span><FileOutput size={13} /></span><div><strong>生成申报材料</strong><small>源代码和用户手册 DOCX、PDF</small></div>
                   </div>
                 </div>
                 <Button className="app-full-button" asChild variant="secondary">

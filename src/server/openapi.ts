@@ -9,18 +9,8 @@ import {
   generateRequestSchema,
   generationJobIdSchema,
   generationRecordIdSchema,
-  filingJobCancelSchema,
-  filingJobCreateSchema,
-  filingJobEventSchema,
-  filingJobIdSchema,
-  filingJobResumeSchema,
-  filingProfileInputSchema,
   llmConfigIdSchema,
   llmConfigWriteSchema,
-  materialCompleteSchema,
-  materialIdSchema,
-  materialKindSchema,
-  materialUploadSchema,
   pdfRenderRequestSchema,
   sourceArchiveUploadSchema,
   sourceArchiveCompleteSchema,
@@ -52,41 +42,6 @@ const applicationResponseSchema = z.object({
   description: "申请记录及其著作权人信息。其余软件字段与 ApplicationFields 对齐。",
 });
 
-const materialResponseSchema = z.object({
-  id: z.string().uuid(),
-  application_id: z.string().uuid(),
-  generation_record_id: z.string().uuid().nullable().optional(),
-  holder_id: z.string().uuid().nullable().optional(),
-  kind: materialKindSchema,
-  status: z.enum(["missing", "generated", "uploaded", "awaiting_official", "awaiting_user", "invalid"]),
-  required: z.boolean(),
-  source: z.enum(["generated", "uploaded", "official"]),
-  file_name: z.string().nullable().optional(),
-  mime_type: z.string().nullable().optional(),
-  size_bytes: z.number().nullable().optional(),
-  checksum: z.string().nullable().optional(),
-  download_url: z.string().url().nullable().optional(),
-  created_at: z.string(),
-  updated_at: z.string(),
-}).meta({
-  id: "ApplicationMaterial",
-  description: "申请材料及其状态。",
-});
-
-const materialsResponseSchema = z.object({
-  materials: z.array(materialResponseSchema),
-  summary: z.object({
-    complete: z.boolean(),
-    requiredCount: z.number().int(),
-    readyCount: z.number().int(),
-    filingReady: z.boolean(),
-    filingRequiredCount: z.number().int(),
-    filingReadyCount: z.number().int(),
-  }),
-}).meta({
-  id: "MaterialsResponse",
-});
-
 const generationJobSchema = z.object({
   id: generationJobIdSchema,
   user_id: z.string().uuid(),
@@ -104,88 +59,6 @@ const generationJobSchema = z.object({
 }).meta({
   id: "GenerationJob",
 });
-
-const filingJobSchema = z.object({
-  id: filingJobIdSchema,
-  user_id: z.string().uuid(),
-  application_id: applicationIdSchema,
-  status: z.enum(["created", "waiting_extension", "opening_portal", "waiting_login", "filling", "waiting_review", "uploading", "waiting_user", "completed", "failed", "cancelled"]),
-  current_step: z.enum(["pairing", "opening_portal", "login", "r11_entry", "application_form", "review", "materials", "signature_page", "waiting_user", "completed"]),
-  progress: z.number().int().min(0).max(100),
-  adapter_version: z.string(),
-  extension_version: z.string().nullable(),
-  browser: z.enum(["chrome", "edge"]),
-  input_application_updated_at: z.string().nullable(),
-  input_materials: z.array(z.object({
-    id: z.string().uuid(),
-    kind: materialKindSchema,
-    checksum: z.string().nullable(),
-  })),
-  error_code: z.string().nullable(),
-  error_message: z.string().nullable(),
-  started_at: z.string().nullable(),
-  completed_at: z.string().nullable(),
-  created_at: z.string(),
-  updated_at: z.string(),
-}).meta({
-  id: "FilingJob",
-  description: "Chrome 扩展辅助填报任务；不包含密码、签名 URL 或完整表单快照。",
-});
-
-const filingEventResponseSchema = z.object({
-  id: z.string().uuid(),
-  user_id: z.string().uuid(),
-  job_id: filingJobIdSchema,
-  step: z.string(),
-  code: z.string(),
-  progress: z.number().int().min(0).max(100).nullable(),
-  extension_version: z.string().nullable(),
-  metadata: z.object({}).passthrough().nullable(),
-  created_at: z.string(),
-}).meta({ id: "FilingEvent" });
-
-const filingJobWithEventsSchema = z.object({
-  job: filingJobSchema,
-  events: z.array(filingEventResponseSchema),
-}).meta({ id: "FilingJobWithEvents" });
-
-const filingMaterialManifestSchema = z.object({
-  id: z.string().uuid(),
-  kind: materialKindSchema,
-  fileName: z.string(),
-  mimeType: z.string(),
-  sizeBytes: z.number().int().nullable(),
-  checksum: z.string().nullable(),
-  downloadUrl: z.string().url(),
-}).meta({ id: "FilingMaterialManifest" });
-
-const filingProfileSchema = z.object({
-  applicant_address: z.string(),
-  postal_code: z.string(),
-  contact_name: z.string(),
-  contact_phone: z.string(),
-}).meta({
-  id: "FilingProfile",
-  description: "当前用户维护的官网填报默认资料，不包含电子邮箱。",
-});
-
-const filingManifestSchema = z.object({
-  jobId: filingJobIdSchema,
-  targetUrl: z.string().url(),
-  adapterVersion: z.string(),
-  expiresAt: z.string(),
-  application: z.object({}).passthrough(),
-  filingProfile: filingProfileSchema,
-  materials: z.array(filingMaterialManifestSchema),
-}).meta({
-  id: "FilingManifest",
-  description: "发给已安装扩展的本次填报数据和短期材料下载地址。",
-});
-
-const filingStartResponseSchema = z.object({
-  job: filingJobSchema,
-  manifest: filingManifestSchema,
-}).meta({ id: "FilingStartResponse" });
 
 const jobEventSchema = z.object({
   id: z.string().uuid(),
@@ -210,6 +83,7 @@ const publicLlmConfigSchema = z.object({
   id: llmConfigIdSchema,
   name: z.string(),
   provider: z.enum(["openai", "deepseek"]),
+  baseUrl: z.string().url(),
   model: z.string(),
   keyLast4: z.string(),
   createdAt: z.string(),
@@ -243,16 +117,6 @@ const sourceArchiveSchema = z.object({
 }).meta({
   id: "ApplicationSourceArchive",
   description: "当前申请已绑定、可供失败重试继续使用的源码压缩包。对象键不会返回前端。",
-});
-
-const materialUploadAuthorizationSchema = z.object({
-  material: materialResponseSchema,
-  path: z.string(),
-  token: z.string(),
-  contentType: z.string(),
-}).meta({
-  id: "MaterialUploadAuthorization",
-  description: "材料直传 Supabase Storage 所需的临时授权。",
 });
 
 const generationRecordSchema = z.object({
@@ -318,10 +182,6 @@ const standardErrorResponses = {
     description: "当前资源状态冲突，例如申请已有运行中的生成任务。",
     content: { "application/json": { schema: apiErrorSchema } },
   },
-  "422": {
-    description: "申请或材料尚未满足官方填报前置条件。",
-    content: { "application/json": { schema: apiErrorSchema } },
-  },
   "500": {
     description: "服务器或上游服务处理失败。",
     content: { "application/json": { schema: apiErrorSchema } },
@@ -339,17 +199,8 @@ const applicationPath = z.object({
   id: applicationIdSchema.meta({ description: "申请 UUID。" }),
 });
 
-const materialPath = z.object({
-  id: applicationIdSchema.meta({ description: "申请 UUID。" }),
-  materialId: materialIdSchema.meta({ description: "材料 UUID。" }),
-});
-
 const generationJobPath = z.object({
   id: generationJobIdSchema.meta({ description: "生成任务 UUID。" }),
-});
-
-const filingJobPath = z.object({
-  id: filingJobIdSchema.meta({ description: "填报任务 UUID。" }),
 });
 
 const generationDownloadPath = z.object({
@@ -367,14 +218,12 @@ export function buildOpenApiDocument() {
     info: {
       title: "软著申报助手 API",
       version: "0.1.0",
-      description: "软著申请信息、材料包和生成任务接口。所有示例均为虚构数据。",
+      description: "软著申请信息、Word/PDF 生成任务和历史记录接口。所有示例均为虚构数据。",
     },
     servers: [{ url: "/", description: "当前部署环境" }],
     tags: [
       { name: "申请", description: "软件著作权申请及著作权人信息。" },
-      { name: "材料", description: "DOCX、PDF、合作协议和签章页等材料。" },
       { name: "生成", description: "申请信息补全、材料生成和任务状态。" },
-      { name: "填报", description: "Chrome 扩展辅助官方页面填报和材料上传。" },
       { name: "模型配置", description: "当前用户的 LLM 配置。" },
       { name: "历史记录", description: "生成历史和临时下载链接。" },
       { name: "辅助/内部", description: "源码上传、健康检查和兼容接口。" },
@@ -439,64 +288,6 @@ export function buildOpenApiDocument() {
           summary: "删除申请及关联文件",
           requestParams: { path: applicationPath },
           responses: responses(z.null(), "删除成功"),
-        },
-      },
-      "/api/filing-profile": {
-        get: {
-          tags: ["填报"],
-          summary: "获取当前用户的官网填报默认资料",
-          responses: responses(filingProfileSchema.nullable()),
-        },
-        put: {
-          tags: ["填报"],
-          summary: "保存官网填报默认资料",
-          description: "允许保存不完整资料；创建自动填报任务前必须补齐地址、邮政编码、联系人和联系电话。",
-          requestBody: jsonRequest(filingProfileInputSchema),
-          responses: responses(filingProfileSchema, "官网填报资料已保存"),
-        },
-      },
-      "/api/applications/{id}/materials": {
-        get: {
-          tags: ["材料"],
-          summary: "获取申请材料清单和完成度",
-          requestParams: { path: applicationPath },
-          responses: responses(materialsResponseSchema),
-        },
-      },
-      "/api/applications/{id}/materials/upload-url": {
-        post: {
-          tags: ["材料"],
-          summary: "创建材料 signed upload 授权",
-          requestParams: { path: applicationPath },
-          requestBody: jsonRequest(materialUploadSchema),
-          responses: responses(materialUploadAuthorizationSchema, "材料上传授权已创建"),
-        },
-      },
-      "/api/applications/{id}/materials/complete": {
-        post: {
-          tags: ["材料"],
-          summary: "确认材料上传完成",
-          requestParams: { path: applicationPath },
-          requestBody: jsonRequest(materialCompleteSchema),
-          responses: responses(materialResponseSchema, "材料已上传"),
-        },
-      },
-      "/api/applications/{id}/materials/{materialId}": {
-        delete: {
-          tags: ["材料"],
-          summary: "删除申请材料",
-          requestParams: { path: materialPath },
-          responses: responses(z.null(), "材料已删除"),
-        },
-      },
-      "/api/applications/{id}/filing-jobs": {
-        post: {
-          tags: ["填报"],
-          summary: "创建官方网页辅助填报任务",
-          description: "创建任务并返回仅在当前页面使用的申请数据和短期材料下载地址。不会执行登录、验证码、签章或最终提交。",
-          requestParams: { path: applicationPath },
-          requestBody: jsonRequest(filingJobCreateSchema),
-          responses: responses(filingStartResponseSchema, "填报任务已创建"),
         },
       },
       "/api/applications/{id}/source-archive": {
@@ -604,60 +395,6 @@ export function buildOpenApiDocument() {
           summary: "获取生成任务及事件",
           requestParams: { path: generationJobPath },
           responses: responses(jobWithEventsSchema),
-        },
-      },
-      "/api/filing-jobs/{id}": {
-        get: {
-          tags: ["填报"],
-          summary: "获取填报任务及事件",
-          requestParams: { path: filingJobPath },
-          responses: responses(filingJobWithEventsSchema),
-        },
-      },
-      "/api/filing-jobs": {
-        get: {
-          tags: ["填报"],
-          summary: "获取申请最近一次填报任务",
-          requestParams: {
-            query: z.object({
-              applicationId: applicationIdSchema.meta({ description: "申请 UUID。" }),
-            }),
-          },
-          responses: responses(filingJobSchema.nullable()),
-        },
-      },
-      "/api/filing-jobs/{id}/events": {
-        get: {
-          tags: ["填报"],
-          summary: "获取填报任务事件",
-          requestParams: { path: filingJobPath },
-          responses: responses(filingJobWithEventsSchema),
-        },
-        post: {
-          tags: ["填报"],
-          summary: "记录扩展填报事件",
-          requestParams: { path: filingJobPath },
-          requestBody: jsonRequest(filingJobEventSchema),
-          responses: responses(z.object({ job: filingJobSchema }), "填报事件已记录"),
-        },
-      },
-      "/api/filing-jobs/{id}/resume": {
-        post: {
-          tags: ["填报"],
-          summary: "恢复填报任务",
-          description: "重新校验当前申请和材料，并重新生成短期下载地址。",
-          requestParams: { path: filingJobPath },
-          requestBody: jsonRequest(filingJobResumeSchema),
-          responses: responses(filingStartResponseSchema, "填报任务已准备恢复"),
-        },
-      },
-      "/api/filing-jobs/{id}/cancel": {
-        post: {
-          tags: ["填报"],
-          summary: "取消填报任务",
-          requestParams: { path: filingJobPath },
-          requestBody: jsonRequest(filingJobCancelSchema),
-          responses: responses(z.object({ job: filingJobSchema }), "填报任务已取消"),
         },
       },
       "/api/generation-records": {

@@ -18,6 +18,7 @@ function asByokConfig(value: SavedLlmConfig): ByokConfig {
     id: value.id,
     name: value.name,
     provider: value.provider,
+    baseUrl: value.baseUrl,
     model: value.model,
     keyLast4: value.keyLast4,
   };

@@ -82,22 +82,22 @@ function sendEvent(event: Exclude<ExtensionToAppMessage, { type: "EXTENSION_READ
   sendMessage({ type: "OFFICIAL_EVENT", event });
 }
 
-function progress(step: FilingStep, code: FilingEventCode, value: number): void {
+function progress(step: FilingStep, code: FilingEventCode, value: number, detail?: string): void {
   if (!session) return;
-  sendEvent({ protocol: FILING_PROTOCOL, source: FILING_EXTENSION_SOURCE, type: "FILING_PROGRESS", jobId: session.jobId, step, code, progress: Math.max(0, Math.min(100, value)) });
+  sendEvent({ protocol: FILING_PROTOCOL, source: FILING_EXTENSION_SOURCE, type: "FILING_PROGRESS", jobId: session.jobId, step, code, progress: Math.max(0, Math.min(100, value)), ...(detail ? { detail } : {}) });
 }
 
-function needUser(step: FilingStep, code: FilingEventCode): void {
+function needUser(step: FilingStep, code: FilingEventCode, detail?: string): void {
   if (!session || session.lastNeedCode === code) return;
   session.lastNeedCode = code;
-  sendEvent({ protocol: FILING_PROTOCOL, source: FILING_EXTENSION_SOURCE, type: "FILING_NEEDS_USER", jobId: session.jobId, step, code });
+  sendEvent({ protocol: FILING_PROTOCOL, source: FILING_EXTENSION_SOURCE, type: "FILING_NEEDS_USER", jobId: session.jobId, step, code, ...(detail ? { detail } : {}) });
 }
 
-function fail(code: FilingEventCode, step: FilingStep): void {
+function fail(code: FilingEventCode, step: FilingStep, detail?: string): void {
   if (!session) return;
   session.lastNeedCode = code;
   session.stage = "done";
-  sendEvent({ protocol: FILING_PROTOCOL, source: FILING_EXTENSION_SOURCE, type: "FILING_FAILED", jobId: session.jobId, step, code, retryable: true });
+  sendEvent({ protocol: FILING_PROTOCOL, source: FILING_EXTENSION_SOURCE, type: "FILING_FAILED", jobId: session.jobId, step, code, retryable: true, ...(detail ? { detail } : {}) });
 }
 
 function finish(): void {
@@ -117,7 +117,7 @@ function scheduleAdvance(delay = 250, force = false): void {
   scheduledTimer = window.setTimeout(() => {
     scheduledTimer = null;
     void advance().catch((error: unknown) => {
-      if (session) fail(adapterErrorCode(error), "application_form");
+      if (session) fail(adapterErrorCode(error), "application_form", `${session.lastPage}.advance`);
     });
   }, delay);
 }
@@ -305,7 +305,7 @@ async function uploadMaterials(adapter: R11Adapter): Promise<void> {
     let input: HTMLInputElement;
     try { input = adapter.findUploadInput(material.kind); }
     catch (error) {
-      fail(adapterErrorCode(error) === "field_not_found" ? "manual_upload_required" : adapterErrorCode(error), "materials");
+      fail(adapterErrorCode(error) === "field_not_found" ? "manual_upload_required" : adapterErrorCode(error), "materials", "materials.find_upload");
       return;
     }
     const progressValue = 65 + Math.floor((index / Math.max(1, available.length)) * 30);
@@ -322,7 +322,7 @@ async function uploadMaterials(adapter: R11Adapter): Promise<void> {
       session.uploaded.add(material.id);
       progress("materials", "upload_completed", completedValue);
     } catch {
-      fail("manual_upload_required", "materials");
+      fail("manual_upload_required", "materials", "materials.file_transfer");
       return;
     }
   }
@@ -330,7 +330,7 @@ async function uploadMaterials(adapter: R11Adapter): Promise<void> {
   const hasSignature = session.manifest.materials.some((material) => material.kind === "signature_page");
   if (!hasSignature) {
     session.stage = "signature";
-    needUser("signature_page", "signature_page_required");
+    needUser("signature_page", "signature_page_required", "signature.manual");
     return;
   }
   finish();
@@ -349,7 +349,7 @@ async function uploadDevelopmentProof(adapter: R11Adapter): Promise<boolean> {
   if (!kind) return true;
   const material = session.manifest.materials.find((item) => item.kind === kind);
   if (!material) {
-    fail("manual_upload_required", "application_form");
+    fail("manual_upload_required", "application_form", "development.proof_upload");
     return false;
   }
   if (session.uploaded.has(material.id)) return true;
@@ -357,7 +357,7 @@ async function uploadDevelopmentProof(adapter: R11Adapter): Promise<boolean> {
   try {
     input = adapter.findUploadInput(kind);
   } catch (error) {
-    fail(adapterErrorCode(error) === "field_not_found" ? "manual_upload_required" : adapterErrorCode(error), "application_form");
+    fail(adapterErrorCode(error) === "field_not_found" ? "manual_upload_required" : adapterErrorCode(error), "application_form", "development.proof_upload");
     return false;
   }
   if (adapter.uploadAcknowledged(input)) {
@@ -372,7 +372,7 @@ async function uploadDevelopmentProof(adapter: R11Adapter): Promise<boolean> {
     progress("application_form", "upload_completed", 48);
     return true;
   } catch {
-    fail("manual_upload_required", "application_form");
+    fail("manual_upload_required", "application_form", "development.proof_transfer");
     return false;
   }
 }
@@ -388,7 +388,15 @@ async function fillPageWithRetry(adapter: R11Adapter, page: R11Page): Promise<bo
   for (let attempt = 0; attempt <= PAGE_RETRY_LIMIT; attempt += 1) {
     if (!session || detectR11Page(document) !== page) return false;
     try {
-      if (!await waitForPageReady(page)) return false;
+      const ready = await waitForPageReady(page);
+      if (!ready) {
+        // A route transition during the wait is normal; a stable route with
+        // no recognizable controls is not. The old silent return made the
+        // second page look dead in the web app and gave the user no useful
+        // reason to retry.
+        if (!session || detectR11Page(document) !== page) return false;
+        throw new AdapterError("field_not_found", "官方第二页控件尚未完成渲染");
+      }
       await adapter.fillCurrentPage(session?.manifest.application as FilingManifest["application"]);
       return Boolean(session && detectR11Page(document) === page);
     } catch (error) {
@@ -488,28 +496,29 @@ async function handleFormPage(adapter: R11Adapter, page: R11Page): Promise<void>
       session.navigationPage = null;
       await new Promise<void>((resolve) => window.setTimeout(resolve, 320));
     } else {
-      fail(hasVisibleValidationErrors(document) ? "field_verification_failed" : "portal_structure_changed", "application_form");
+      fail(hasVisibleValidationErrors(document) ? "field_verification_failed" : "portal_structure_changed", "application_form", `${page}.navigation`);
       return;
     }
   }
 
-  if (!session.formStarted) {
-    session.formStarted = true;
-    progress("application_form", "form_started", 20);
-  }
+  if (!session.formStarted) session.formStarted = true;
+  // Report every form page, not only the first one. This makes a slow Vue
+  // route transition visible in the web app instead of looking like the
+  // extension stopped after page one.
+  progress("application_form", "form_started", pageProgress(page), `${page}.start`);
   try {
     const filled = await fillPageWithRetry(adapter, page);
     if (!filled || !session || detectR11Page(document) !== page) return;
   } catch (error) {
-    fail(adapterErrorCode(error), "application_form");
+    fail(adapterErrorCode(error), "application_form", adapter.diagnosticOperation());
     return;
   }
   if (!session) return;
   if (page === "legacy") {
     session.stage = "review";
     session.resumeRequested = false;
-    progress("application_form", "form_filled", 60);
-    needUser("review", "review_required");
+    progress("application_form", "form_filled", 60, "application.review");
+    needUser("review", "review_required", "application.review");
     return;
   }
   if (page === "development" && !await uploadDevelopmentProof(adapter)) return;
@@ -525,14 +534,14 @@ async function handleFormPage(adapter: R11Adapter, page: R11Page): Promise<void>
     transitioned = await waitForPageTransition(page);
     if (!session) return;
   } catch (error) {
-    fail(adapterErrorCode(error), "application_form");
+    fail(adapterErrorCode(error), "application_form", `${page}.next`);
     return;
   }
   session.lastPage = page;
   session.navigationPage = page;
   session.navigationStartedAt = Date.now();
   session.navigationAttempts += 1;
-  progress("application_form", "form_filled", pageProgress(page));
+  progress("application_form", "form_filled", pageProgress(page), `${page}.filled`);
   scheduleAdvance(transitioned ? 120 : 900, true);
 }
 
@@ -549,7 +558,7 @@ async function advance(): Promise<void> {
     if (hasVisibleLoginPrompt(document)) {
       session.stage = "idle";
       session.loginPromptSeen = true;
-      needUser("login", "login_required");
+      needUser("login", "login_required", "login.manual");
       return;
     }
     if (session.loginPromptSeen) {
@@ -562,7 +571,7 @@ async function advance(): Promise<void> {
       try {
         session.profileFilled = await adapter.fillFilingProfile(session.manifest.filingProfile);
       } catch (error) {
-        fail(adapterErrorCode(error), "application_form");
+        fail(adapterErrorCode(error), "application_form", "filing_profile.fill");
         return;
       }
     }
@@ -584,14 +593,14 @@ async function advance(): Promise<void> {
 
     if (page === "identity") {
       session.stage = "idle";
-      needUser("login", "login_required");
+      needUser("login", "login_required", "login.manual");
       return;
     }
     if (page === "confirm") {
       session.stage = "review";
       session.resumeRequested = false;
       progress("review", "form_filled", 75);
-      needUser("review", "review_required");
+      needUser("review", "review_required", "review.manual");
       return;
     }
     if (page === "materials") {
@@ -600,7 +609,7 @@ async function advance(): Promise<void> {
         // still a manual checkpoint. Wait for the web app's RESUME_FILING so
         // the user can finish the official review before files are uploaded.
         session.stage = "review";
-        needUser("review", "review_required");
+        needUser("review", "review_required", "review.manual");
         return;
       }
       session.stage = "upload";
@@ -617,7 +626,7 @@ async function advance(): Promise<void> {
         // At the real /confirm route the “提交材料清单” action may be the
         // gateway to the file page. It is intentionally left to the user so
         // that the extension cannot mistake it for final submission.
-        needUser("review", "review_required");
+        needUser("review", "review_required", "review.manual");
         return;
       }
       await uploadMaterials(adapter);

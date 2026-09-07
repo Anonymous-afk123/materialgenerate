@@ -15,6 +15,7 @@ const eslintConfig = defineConfig([
     'server/dist/**',
     'server/.test-dist/**',
     'server/.test-venv/**',
+    '_archive/**',
     'next-env.d.ts',
   ]),
 ]);

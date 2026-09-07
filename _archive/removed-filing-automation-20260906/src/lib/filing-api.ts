@@ -80,6 +80,7 @@ export async function recordFilingEvent(jobId: string, event: {
   progress?: number;
   extensionVersion?: string;
   retryable?: boolean;
+  detail?: string;
 }): Promise<FilingJob> {
   const response = await authorizedFetch(apiEndpoint(`/api/filing-jobs/${encodeURIComponent(jobId)}/events`), {
     method: "POST",

@@ -18,8 +18,6 @@ import {
   X,
 } from "lucide-react";
 import { AppShell, PageHeader, Panel, StatusBadge } from "@/components/app-shell";
-import { MaterialChecklist } from "@/components/material-checklist";
-import { FilingPanel } from "@/components/filing-panel";
 import { Button } from "@/components/ui/button";
 import { apiEndpoint } from "@/lib/api-base";
 import { authorizedFetch } from "@/lib/auth";
@@ -39,7 +37,6 @@ interface GenerationResult {
   sourceCodePdf?: string;
   userManualDocx?: string;
   userManualPdf?: string;
-  collectionFormMarkdown?: string;
   fileName?: string;
   recordId?: string;
   pdfWarnings?: string[];
@@ -72,7 +69,7 @@ async function fetchLatestGenerationJob(applicationId: string): Promise<Generati
 
 const generationSteps = [
   { key: "init", label: "读取申请信息", description: "确认登记字段和源码输入" },
-  { key: "analyze", label: "整理采集表", description: "生成材料所需的结构化信息" },
+  { key: "analyze", label: "整理申请信息", description: "生成材料所需的结构化信息" },
   { key: "source_code", label: "生成源代码文档", description: "整理源码章节和说明" },
   { key: "manual", label: "生成用户手册", description: "编写操作流程和功能说明" },
   { key: "convert", label: "生成文档格式", description: "准备可下载的 DOCX 和 PDF 文件" },
@@ -105,7 +102,6 @@ function resultItems() {
     { key: "sourceCodePdf", label: "源代码文档", description: "PDF", icon: FileText },
     { key: "userManualDocx", label: "用户手册", description: "DOCX", icon: FileText },
     { key: "userManualPdf", label: "用户手册", description: "PDF", icon: FileText },
-    { key: "collectionFormMarkdown", label: "采集表", description: "Markdown", icon: FileOutput },
   ] as const;
 }
 
@@ -121,7 +117,6 @@ export default function GenerationDetailPage() {
   const [latestJob, setLatestJob] = useState<GenerationJob | null>(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
-  const [materialRefresh, setMaterialRefresh] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const latestStatus = latestJob?.status;
@@ -144,7 +139,7 @@ export default function GenerationDetailPage() {
           setMessage(`上一次生成任务进行中（${job.progress}%）`);
         } else if (job?.status === "completed") {
           setCurrentStep("complete");
-          setMessage("上一次生成已完成，可在下方材料清单中下载文件。");
+          setMessage("上一次生成已完成，可在下方下载文件。");
         }
         setError(null);
       })
@@ -169,8 +164,7 @@ export default function GenerationDetailPage() {
         setLatestJob(job);
         setCurrentStep(job.current_step);
         if (job.status === "completed") {
-          setMessage("生成已完成，可在下方材料清单中下载文件。");
-          setMaterialRefresh((current) => current + 1);
+          setMessage("生成已完成，可在下方下载文件。");
         } else if (job.status === "failed" || job.status === "cancelled") {
           setMessage(job.error_message || "生成任务未完成");
         } else {
@@ -263,7 +257,6 @@ export default function GenerationDetailPage() {
       setResult(finalResult);
       if (finalResult?.jobId) {
         setLatestJob({ id: finalResult.jobId, status: "completed", current_step: "complete", progress: 100 });
-        setMaterialRefresh((current) => current + 1);
       } else {
         const job = await fetchLatestGenerationJob(id);
         if (job) {
@@ -273,14 +266,13 @@ export default function GenerationDetailPage() {
           if (job.status === "failed" || job.status === "cancelled") {
             setError(job.error_message || "生成任务未完成");
           } else if (job.status === "completed") {
-            setError("生成任务已完成，但文件结果未返回，请刷新页面查看材料清单。");
+            setError("生成任务已完成，但文件结果未返回，请刷新页面查看生成结果。");
           } else {
             setError("生成连接已中断，任务仍在服务器处理；请等待任务状态更新。");
           }
         } else {
           setError("生成连接已中断，任务状态暂不可用，请刷新页面查看。");
         }
-        setMaterialRefresh((current) => current + 1);
       }
     } catch (cause) {
       if (cause instanceof Error && cause.name === "AbortError") setError("已取消生成");
@@ -326,7 +318,7 @@ export default function GenerationDetailPage() {
               <div className="generation-config__row">
                 <div className="generation-field">
                   <span className="form-label">使用模型</span>
-                  <div className="generation-value"><span className="generation-value__icon"><LockKeyhole size={14} /></span>{byok?.id ? `${byok.provider} / ${byok.model} · ****${byok.keyLast4}` : "尚未保存 AI 配置"}</div>
+                  <div className="generation-value"><span className="generation-value__icon"><LockKeyhole size={14} /></span>{byok?.id ? `${byok.baseUrl} / ${byok.model} · ****${byok.keyLast4}` : "尚未保存 AI 配置"}</div>
                 </div>
                 <div className="generation-field">
                   <span className="form-label">申请完成度</span>
@@ -418,25 +410,6 @@ export default function GenerationDetailPage() {
             <div className="generation-side-panel__tip"><FileOutput size={15} /><span>生成结果会自动写入生成记录，签名下载链接只在短时间内有效。</span></div>
           </Panel>
         </div>
-      )}
-      {application && !loading && (
-        <Panel className="generation-material-panel">
-          <MaterialChecklist
-            applicationId={application.id}
-            developmentMethod={application.development_method}
-            refreshToken={materialRefresh}
-          />
-        </Panel>
-      )}
-      {application && !loading && (
-        <Panel className="generation-material-panel">
-          <FilingPanel
-            applicationId={application.id}
-            holderCount={application.copyright_holders.length}
-            developmentMethod={application.development_method}
-            softwareName={application.software_full_name}
-          />
-        </Panel>
       )}
     </AppShell>
   );

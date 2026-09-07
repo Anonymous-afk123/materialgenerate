@@ -8,7 +8,7 @@ import {
 } from "../../src/lib/filing-protocol.ts";
 
 const APP_ORIGINS = __SOFTREG_APP_ORIGINS__;
-const VERSION = "0.1.0";
+const VERSION = "0.1.2";
 
 function postToPage(message: ExtensionToAppMessage): void {
   const appOrigin = APP_ORIGINS.includes(window.location.origin) ? window.location.origin : null;

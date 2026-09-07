@@ -21,11 +21,11 @@ import {
 const mainFunctions = "功能描述".repeat(130);
 
 test("choice fields preserve multiple presets and custom values", () => {
-  const selection = parseChoiceSelection("应用软件、工业软件、自研平台", SOFTWARE_CATEGORY_OPTIONS);
-  assert.deepEqual(selection.selected, ["应用软件", "工业软件"]);
+  const selection = parseChoiceSelection("应用软件、嵌入式软件、自研平台", SOFTWARE_CATEGORY_OPTIONS);
+  assert.deepEqual(selection.selected, ["应用软件", "嵌入式软件"]);
   assert.equal(selection.custom, "自研平台");
-  assert.equal(serializeChoiceSelection(selection.selected, selection.custom), "应用软件、工业软件、自研平台");
-  assert.equal(serializeChoiceSelection(["应用软件", "应用软件"], "工业软件、工业软件"), "应用软件、工业软件");
+  assert.equal(serializeChoiceSelection(selection.selected, selection.custom), "应用软件、嵌入式软件、自研平台");
+  assert.equal(serializeChoiceSelection(["应用软件", "应用软件"], "嵌入式软件、嵌入式软件"), "应用软件、嵌入式软件");
 });
 
 test("registration field limits are enforced while an empty draft remains valid", () => {

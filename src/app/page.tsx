@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 const features = [
   { icon: FileText, title: "统一管理申请信息", description: "把软件名称、环境、功能说明和权属信息集中在一条申请里。" },
   { icon: Bot, title: "AI 辅助补全", description: "使用自己的模型 Key 获得内容建议，重要字段始终由你确认。" },
-  { icon: FileCheck2, title: "按流程生成材料", description: "根据已保存的登记信息，生成源代码文档、用户手册和采集表。" },
+  { icon: FileCheck2, title: "按流程生成材料", description: "根据已保存的登记信息，生成源代码和用户手册的 DOCX、PDF 文件。" },
   { icon: History, title: "生成记录可追溯", description: "每次生成都保留申请、模型和时间信息，方便后续查找。" },
   { icon: Download, title: "短时安全下载", description: "生成文件通过短时签名链接下载，减少长期暴露风险。" },
   { icon: ShieldCheck, title: "账户数据隔离", description: "申请和生成记录按登录账户隔离，API Key 使用服务端加密保存。" },
@@ -43,7 +43,7 @@ export default function HomePage() {
         <div>
           <span className="marketing-kicker"><span />软件著作权申报工作台</span>
           <h1>把申报信息，整理成<span>可交付的材料。</span></h1>
-          <p className="marketing-hero__description">从申请信息管理到源码文档、用户手册和采集表生成，使用清晰的流程完成软件著作权申报准备。</p>
+          <p className="marketing-hero__description">从申请信息管理到源码文档、用户手册的 DOCX 和 PDF 生成，使用清晰的流程完成软件著作权申报准备。</p>
           <div className="marketing-hero__actions">
             <Button asChild size="lg"><Link href={user ? "/app" : "/register"}>{user ? "打开工作台" : "开始使用"}<ArrowRight size={16} /></Link></Button>
             <Button asChild size="lg" variant="outline"><Link href={user ? "/app/history" : "/login"}>{user ? "查看生成记录" : "已有账户，登录"}</Link></Button>

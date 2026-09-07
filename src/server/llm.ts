@@ -41,6 +41,7 @@ export class LlmError extends Error {
 
 export interface LlmInput {
   provider: Provider;
+  baseUrl?: string;
   model: string;
   apiKey: string;
   messages: ChatMessage[];
@@ -323,7 +324,7 @@ export async function streamLlm(
   return content;
 }
 
-export async function testLlm(input: Pick<LlmInput, "provider" | "model" | "apiKey">): Promise<void> {
+export async function testLlm(input: Pick<LlmInput, "provider" | "baseUrl" | "model" | "apiKey">): Promise<void> {
   await callLlm({
     ...input,
     messages: [{ role: "user", content: "请只回复：连接正常" }],

@@ -9,9 +9,10 @@ process.env.CONVERTER_SHARED_SECRET ||= "test-converter-secret";
 process.env.LLM_CONFIG_ENCRYPTION_KEY ||= "test-encryption-key";
 process.env.LLM_REQUEST_TIMEOUT_MS ||= "1000";
 
-test("OpenAI uses the fixed endpoint and developer role adapter", async () => {
+test("OpenAI uses the configured base URL and developer role adapter", async () => {
   const request = buildProviderRequest({
     provider: "openai",
+    baseUrl: "https://gateway.example/v1/",
     model: "gpt-5-mini",
     messages: [
       { role: "system", content: "System instruction" },
@@ -23,7 +24,7 @@ test("OpenAI uses the fixed endpoint and developer role adapter", async () => {
   });
 
   const body = request.body as Record<string, unknown>;
-  assert.equal(request.url, "https://api.openai.com/v1/chat/completions");
+  assert.equal(request.url, "https://gateway.example/v1/chat/completions");
   assert.equal((body.messages as Array<{ role: string }>)[0].role, "developer");
   assert.equal(body.max_completion_tokens, 1000);
   assert.equal(body.temperature, undefined);
@@ -133,14 +134,20 @@ test("streaming provider errors and resource finish reasons are surfaced", async
   }
 });
 
-test("model policy rejects arbitrary providers and models", async () => {
+test("model policy accepts arbitrary model names for supported protocols", async () => {
   assert.equal(isAllowedModel("openai", "gpt-5-mini"), true);
   assert.equal(isAllowedModel("deepseek", "deepseek-v4-pro"), true);
-  assert.equal(isAllowedModel("openai", "https://attacker.example/model"), false);
+  assert.equal(isAllowedModel("openai", "vendor-model-2026"), true);
   assert.equal(isAllowedModel("custom", "gpt-5-mini"), false);
   assert.equal(byokSchema.safeParse({
     provider: "openai",
-    model: "https://attacker.example/model",
+    baseUrl: "https://gateway.example/v1",
+    model: "vendor-model-2026",
+    apiKey: "test-provider-key",
+  }).success, true);
+  assert.equal(byokSchema.safeParse({
+    provider: "openai",
+    model: "vendor-model-2026",
     apiKey: "test-provider-key",
   }).success, false);
 });

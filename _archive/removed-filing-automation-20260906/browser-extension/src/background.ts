@@ -52,6 +52,7 @@ function eventMessage(input: {
   code: FilingEventCode;
   progress?: number;
   retryable?: boolean;
+  detail?: string;
 }): ExtensionToAppMessage {
   if (input.type === "FILING_PROGRESS") return {
     protocol: FILING_PROTOCOL,
@@ -61,6 +62,7 @@ function eventMessage(input: {
     step: input.step,
     code: input.code,
     progress: input.progress ?? 0,
+    ...(input.detail ? { detail: input.detail } : {}),
   };
   if (input.type === "FILING_NEEDS_USER") return {
     protocol: FILING_PROTOCOL,
@@ -69,6 +71,7 @@ function eventMessage(input: {
     jobId: input.jobId,
     step: input.step,
     code: input.code,
+    ...(input.detail ? { detail: input.detail } : {}),
   };
   if (input.type === "FILING_COMPLETED") return {
     protocol: FILING_PROTOCOL,
@@ -85,6 +88,7 @@ function eventMessage(input: {
     step: input.step,
     code: input.code,
     retryable: input.retryable ?? true,
+    ...(input.detail ? { detail: input.detail } : {}),
   };
 }
 
